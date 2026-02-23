@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 from openai import OpenAI
+from planner import FinancialPlanner
 
 SYSTEM_PROMPT = """You are an AI Financial Organizer & Coach.
 Your primary mission is to help the user bring personal finances into order: clarity, stability, and sustainable habits.
@@ -231,6 +232,7 @@ class FinancialAgent:
         self._load_env_if_needed()
         self.client = OpenAI()
         self.model = "gpt-4o-mini"
+        self.planner = FinancialPlanner(client=self.client, model=self.model)
         self.conversation_history: list[dict[str, str]] = []
         self.csv_summary: str | None = None
         self.df: pd.DataFrame | None = None
@@ -317,6 +319,21 @@ class FinancialAgent:
         3. Детали добавляются к сообщению пользователя
         4. Основной LLM-вызов с обогащённым контекстом
         """
+        # Делегируем planning-запросы отдельному агенту-планировщику.
+        if self.df is not None:
+            planning_result = self.planner.run(
+                user_message=user_message,
+                df=self.df,
+                csv_summary=self.csv_summary or "",
+            )
+            if planning_result is not None:
+                self.conversation_history.append({"role": "user", "content": user_message})
+                self.conversation_history.append({"role": "assistant", "content": planning_result})
+                if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
+                    self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES :]
+                logger.info("[CHAT] Ответ сформирован через Planning Agent")
+                return planning_result
+
         detail_block = ""
         route_decision = {"needs_data": False, "queries": []}
 
@@ -432,6 +449,7 @@ class FinancialAgent:
         self.conversation_history = []
         self.csv_summary = None
         self.df = None
+        self.planner.on_step = None
 
     def _route(self, user_message: str) -> dict:
         """
@@ -501,28 +519,59 @@ class FinancialAgent:
 """
 
         try:
+            route_messages = [{"role": "user", "content": prompt}]
+            request_payload = {
+                "scope": "router",
+                "model": self.model,
+                "messages_count": len(route_messages),
+                "temperature": 0,
+                "max_tokens": 200,
+                "messages": route_messages,
+            }
+            logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
+
             started_at = perf_counter()
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=route_messages,
                 max_tokens=200,
                 temperature=0,
             )
             latency_ms = int((perf_counter() - started_at) * 1000)
 
             raw = (response.choices[0].message.content or "").strip()
-            logger.info("[ROUTER] Ответ: %s", raw)
 
             usage = getattr(response, "usage", None)
             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
             completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
             cost_usd = self._estimate_cost(prompt_tokens, completion_tokens)
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+
+            response_payload = {
+                "scope": "router",
+                "id": getattr(response, "id", None),
+                "model": getattr(response, "model", self.model),
+                "finish_reason": finish_reason,
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+                "latency_ms": latency_ms,
+                "cost_usd": cost_usd,
+                "assistant_message": raw,
+            }
+            logger.info("[API][OpenAI][Ответ]\n%s", self._pretty_json(response_payload))
+            logger.info("[ROUTER] Ответ: %s", raw)
             logger.info(
-                "[ROUTER] latency_ms=%s вход=%s выход=%s стоимость=$%.6f",
+                "[ROUTER] latency_ms=%s вход=%s выход=%s всего=%s стоимость=$%.6f finish_reason=%s",
                 latency_ms,
                 prompt_tokens,
                 completion_tokens,
+                total_tokens,
                 cost_usd,
+                finish_reason,
             )
 
             json_match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -547,6 +596,15 @@ class FinancialAgent:
             return normalized
 
         except Exception as exc:
+            error_payload = {
+                "scope": "router",
+                "model": self.model,
+                "messages_count": 1,
+                "temperature": 0,
+                "max_tokens": 200,
+                "error": str(exc),
+            }
+            logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
             logger.warning("[ROUTER] Ошибка: %s — пропускаю обогащение", exc)
             return {"needs_data": False}
 

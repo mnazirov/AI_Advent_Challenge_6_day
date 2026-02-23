@@ -402,6 +402,139 @@ textarea::placeholder { color: var(--muted); }
   border-radius: 4px; padding: 1px 5px;
   font-family: var(--mono); font-size: 0.63rem; color: var(--muted2);
 }
+
+/* ── PLANNING INDICATOR ── */
+.planning-card {
+  background: var(--s2);
+  border: 1px solid rgba(232,201,109,0.2);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: slidedown 0.25s ease;
+  min-width: 320px;
+}
+
+.planning-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--gold);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.planning-title-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold);
+  animation: glowpulse 1.2s ease-in-out infinite;
+}
+
+.planning-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.p-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  transition: background 0.2s, opacity 0.2s;
+  opacity: 0.38;
+}
+
+.p-step.running {
+  background: rgba(232,201,109,0.06);
+  opacity: 1;
+}
+
+.p-step.done {
+  opacity: 0.72;
+}
+
+.p-step.error {
+  opacity: 0.9;
+}
+
+.p-step-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.p-step .p-step-icon.pending {
+  border: 1.5px solid var(--border2);
+  color: var(--muted);
+}
+
+.p-step.running .p-step-icon {
+  border: 1.5px solid transparent;
+  border-top-color: var(--gold);
+  background: transparent;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.p-step.done .p-step-icon {
+  background: rgba(76,201,138,0.15);
+  border: 1px solid rgba(76,201,138,0.3);
+  color: var(--green);
+}
+
+.p-step.error .p-step-icon {
+  background: rgba(240,110,110,0.12);
+  border: 1px solid rgba(240,110,110,0.3);
+  color: var(--red);
+}
+
+.p-step-label {
+  font-size: 0.76rem;
+  color: var(--text);
+  flex: 1;
+}
+
+.p-step.done .p-step-label {
+  color: var(--muted2);
+}
+
+.p-step-detail {
+  font-family: var(--mono);
+  font-size: 0.63rem;
+  color: var(--muted);
+}
+
+.planning-progress-bar {
+  height: 2px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.planning-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #c9a84c, #f0d878);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+  width: 0%;
+}
 </style>
 </head>
 <body>
@@ -572,6 +705,14 @@ textarea::placeholder { color: var(--muted); }
       .replace(/`([^`]+)`/g, '<code>$1</code>');
   }
 
+  const PLANNING_STEPS_CONFIG = [
+    { id: 'goal',       label: 'Определение цели',  icon: '◎' },
+    { id: 'decompose',  label: 'Декомпозиция задач', icon: '⊞' },
+    { id: 'execute',    label: 'Анализ данных',      icon: '⟨/⟩' },
+    { id: 'replan',     label: 'Проверка полноты',   icon: '↻' },
+    { id: 'synthesize', label: 'Синтез плана',       icon: '✦' },
+  ];
+
 
   async function parseApiResponse(res) {
     const contentType = res.headers.get('content-type') || '';
@@ -587,26 +728,153 @@ textarea::placeholder { color: var(--muted); }
     throw new Error(msg);
   }
 
-  /* ── Chat ── */
+  /* ── Chat (SSE) ── */
   async function sendMsg() {
     const inp = document.getElementById('userInput');
-    const text = inp.value.trim(); if (!text) return;
-    inp.value = ''; autoResize(inp); hideWelcome();
-    addMsg('user', text); showTyping(); setBusy(true);
+    const text = inp.value.trim();
+    if (!text) return;
+
+    inp.value = '';
+    autoResize(inp);
+    hideWelcome();
+    addMsg('user', text);
+    setBusy(true);
+
+    const planningCardId = `planning-${Date.now()}`;
+    const planningEl = createPlanningCard(planningCardId);
+    appendToMessages(planningEl);
+
     try {
-      const res = await fetch('/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
+      const res = await fetch('/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
       });
-      const data = await parseApiResponse(res);
-      removeTyping();
-      addMsg('bot', data.reply || '⚠️ Пустой ответ');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() || '';
+
+        for (const chunk of chunks) {
+          const lines = chunk.split('\n').map(line => line.trim()).filter(Boolean);
+          let eventType = '';
+          let dataRaw = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) eventType = line.slice(6).trim();
+            if (line.startsWith('data:')) dataRaw += line.slice(5).trim();
+          }
+
+          if (!eventType || !dataRaw) continue;
+          const payload = JSON.parse(dataRaw);
+
+          if (eventType === 'step') {
+            updatePlanningStep(planningCardId, payload);
+          } else if (eventType === 'done') {
+            removePlanningCard(planningCardId);
+            addMsg('bot', payload.text || '⚠️ Пустой ответ');
+          } else if (eventType === 'error') {
+            removePlanningCard(planningCardId);
+            addMsg('bot', `⚠️ ${payload.error || 'Ошибка'}`);
+          }
+        }
+      }
     } catch (err) {
       console.error('[CHAT] request failed', err);
-      removeTyping();
-      addMsg('bot', `⚠️ Ошибка запроса: ${err.message || 'неизвестная ошибка'}`);
+      removePlanningCard(planningCardId);
+      addMsg('bot', '⚠️ Ошибка соединения с сервером.');
+    } finally {
+      setBusy(false);
+      inp.focus();
     }
-    finally { setBusy(false); inp.focus(); }
+  }
+
+  function createPlanningCard(cardId) {
+    const el = document.createElement('div');
+    el.className = 'msg bot';
+    el.id = cardId;
+
+    const stepsHtml = PLANNING_STEPS_CONFIG.map(step => `
+      <div class="p-step" id="${cardId}-${step.id}">
+        <div class="p-step-icon pending">${step.icon}</div>
+        <span class="p-step-label">${step.label}</span>
+        <span class="p-step-detail" id="${cardId}-${step.id}-detail"></span>
+      </div>
+    `).join('');
+
+    el.innerHTML = `
+      <div class="msg-avatar">💰</div>
+      <div class="msg-content">
+        <div class="msg-name">Советник</div>
+        <div class="planning-card">
+          <div class="planning-title">
+            <div class="planning-title-pulse"></div>
+            Составляю план…
+          </div>
+          <div class="planning-steps">${stepsHtml}</div>
+          <div class="planning-progress-bar">
+            <div class="planning-progress-fill" id="${cardId}-progress"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    return el;
+  }
+
+  function updatePlanningStep(cardId, event) {
+    const baseId = event.id && event.id.startsWith('execute') ? 'execute' : event.id;
+    const stepEl = document.getElementById(`${cardId}-${baseId}`);
+    if (!stepEl) return;
+
+    stepEl.classList.remove('running', 'done', 'error', 'skip');
+    stepEl.classList.add(event.status || 'running');
+
+    const iconEl = stepEl.querySelector('.p-step-icon');
+    iconEl.className = 'p-step-icon';
+    if (event.status === 'done') iconEl.textContent = '✓';
+    else if (event.status === 'error') iconEl.textContent = '✕';
+    else if (event.status === 'running') iconEl.textContent = '';
+    else iconEl.textContent = '•';
+
+    const labelEl = stepEl.querySelector('.p-step-label');
+    if (event.label) labelEl.textContent = event.label;
+
+    const detailEl = document.getElementById(`${cardId}-${baseId}-detail`);
+    if (detailEl && event.detail) detailEl.textContent = event.detail;
+
+    const allSteps = document.querySelectorAll(`#${cardId} .p-step`);
+    const doneSteps = document.querySelectorAll(`#${cardId} .p-step.done`);
+    const pct = allSteps.length ? Math.round((doneSteps.length / allSteps.length) * 100) : 0;
+    const progressEl = document.getElementById(`${cardId}-progress`);
+    if (progressEl) progressEl.style.width = `${pct}%`;
+
+    const box = document.getElementById('messages');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function removePlanningCard(cardId) {
+    const el = document.getElementById(cardId);
+    if (!el) return;
+    el.style.transition = 'opacity 0.3s ease';
+    el.style.opacity = '0';
+    setTimeout(() => {
+      if (el.parentNode) el.remove();
+    }, 300);
+  }
+
+  function appendToMessages(el) {
+    const box = document.getElementById('messages');
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
   }
 
   function q(btn) {
