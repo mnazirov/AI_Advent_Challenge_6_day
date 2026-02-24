@@ -7,6 +7,18 @@ import threading
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from agent import FinancialAgent
+from storage import (
+    clear_session_csv,
+    clear_session_messages,
+    create_session,
+    init_db,
+    load_csv_file,
+    load_session,
+    save_csv_file,
+    save_csv_meta,
+    save_message,
+    session_exists,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,10 +27,11 @@ logging.basicConfig(
 logger = logging.getLogger("app")
 
 app = Flask(__name__)
+init_db()
 
-# Один экземпляр агента на сессию (для учебного задания этого достаточно)
 agent = FinancialAgent()
 logger.info("[INIT] FinancialAgent инициализирован")
+
 
 def _pretty_json(payload: dict) -> str:
     """Форматирует JSON для читаемых логов."""
@@ -57,6 +70,20 @@ def _log_http_response(route: str, status_code: int, payload: dict) -> None:
     logger.info("[HTTP][Ответ]\n%s", _pretty_json(log_payload))
 
 
+def _get_or_create_session() -> str:
+    """Читает session_id из cookie или создаёт новую сессию."""
+    sid = request.cookies.get("session_id")
+    if sid and session_exists(sid):
+        return sid
+    return create_session()
+
+
+def _set_session_cookie(resp: Response, session_id: str) -> Response:
+    """Устанавливает cookie сессии на 30 дней."""
+    resp.set_cookie("session_id", session_id, max_age=60 * 60 * 24 * 30, httponly=True)
+    return resp
+
+
 @app.route("/")
 def index():
     logger.info("[HTTP] Запрос GET /")
@@ -65,91 +92,78 @@ def index():
 
 @app.route("/upload", methods=["POST"])
 def upload_csv():
-    """Принимает CSV-файл и передаёт агенту для анализа."""
+    """Принимает CSV-файл, анализирует и сохраняет метаданные в сессию."""
     logger.info("[UPLOAD] Получен запрос на загрузку CSV")
 
     if "file" not in request.files:
-        _log_http_request(
-            route="/upload",
-            payload={"has_file": False, "filename": None, "size_bytes": 0},
-        )
-        logger.warning("[UPLOAD] В запросе отсутствует поле 'file'")
+        _log_http_request(route="/upload", payload={"has_file": False, "filename": None, "size_bytes": 0})
         response_payload = {"success": False, "error": "Файл не найден"}
         _log_http_response("/upload", 400, response_payload)
         return jsonify(response_payload), 400
 
     file = request.files["file"]
     if not file.filename.endswith(".csv"):
-        logger.warning("[UPLOAD] Неверное расширение файла: %s", file.filename)
         response_payload = {"success": False, "error": "Нужен файл формата .csv"}
         _log_http_response("/upload", 400, response_payload)
         return jsonify(response_payload), 400
 
+    session_id = _get_or_create_session()
     content = file.read()
     _log_http_request(
         route="/upload",
-        payload={"has_file": True, "filename": file.filename, "size_bytes": len(content)},
+        payload={"has_file": True, "filename": file.filename, "size_bytes": len(content), "session_id": session_id},
     )
-    logger.info("[UPLOAD] Обрабатываю файл=%s размер_байт=%s", file.filename, len(content))
 
+    csv_path = save_csv_file(content, file.filename)
     result = agent.load_csv(content, file.filename)
+
     if result.get("success"):
-        analysis = result.get("analysis", {})
-        columns_normalized = analysis.get("columns_normalized", []) or []
-        schema_detected = analysis.get("schema_detected", {}) or {}
-        logger.info(
-            "[UPLOAD] CSV успешно проанализирован строк=%s колонок=%s колонка_суммы=%s источник_схемы=%s",
-            analysis.get("rows"),
-            len(columns_normalized),
-            schema_detected.get("amount"),
-            analysis.get("schema_source"),
+        save_csv_meta(
+            session_id=session_id,
+            filename=file.filename,
+            csv_summary=agent.csv_summary or "",
+            schema_map=(result.get("analysis") or {}).get("schema_detected", {}),
+            csv_path=csv_path,
         )
-    else:
-        logger.error("[UPLOAD] Ошибка анализа CSV: %s", result.get("error"))
 
-    try:
-        json.dumps(result, allow_nan=False)
-        logger.info("[UPLOAD] Проверка JSON-ответа пройдена")
-    except (TypeError, ValueError) as payload_error:
-        logger.error("[UPLOAD] Проверка JSON-ответа не пройдена: %s", payload_error)
-
+    response = jsonify(result)
     _log_http_response(
         "/upload",
         200,
         {
+            "session_id": session_id,
             "success": result.get("success"),
             "error": result.get("error"),
             "analysis_rows": (result.get("analysis") or {}).get("rows"),
-            "analysis_columns": (result.get("analysis") or {}).get("columns_normalized"),
         },
     )
-    return jsonify(result)
+    return _set_session_cookie(response, session_id)
 
 
 @app.route("/chat", methods=["POST"])
 def chat():
     """Принимает сообщение пользователя и возвращает ответ агента."""
-    logger.info("[CHAT] Получен запрос сообщения")
+    data = request.get_json(silent=True) or {}
+    message = data.get("message", "").strip()
+    session_id = _get_or_create_session()
+
+    _log_http_request("/chat", {"message": message, "session_id": session_id})
+    if not message:
+        response_payload = {"error": "Пустое сообщение"}
+        _log_http_response("/chat", 400, response_payload)
+        return jsonify(response_payload), 400
 
     try:
-        data = request.get_json(silent=True) or {}
-        message = data.get("message", "").strip()
-        _log_http_request("/chat", {"message": message})
-
-        if not message:
-            logger.warning("[CHAT] Пустое сообщение")
-            response_payload = {"error": "Пустое сообщение"}
-            _log_http_response("/chat", 400, response_payload)
-            return jsonify(response_payload), 400
-
         reply = agent.chat(message)
-        logger.info("[CHAT] Ответ успешно сформирован")
-        response_payload = {"reply": reply}
-        _log_http_response("/chat", 200, {"reply_len": len(reply), "reply": reply})
-        return jsonify(response_payload)
-    except Exception as e:
-        logger.exception("[CHAT] Ошибка обработки запроса чата: %s", e)
-        response_payload = {"error": str(e)}
+        save_message(session_id, "user", message)
+        save_message(session_id, "assistant", reply)
+
+        response = jsonify({"reply": reply})
+        _log_http_response("/chat", 200, {"session_id": session_id, "reply_len": len(reply)})
+        return _set_session_cookie(response, session_id)
+    except Exception as exc:
+        logger.exception("[CHAT] Ошибка обработки запроса чата: %s", exc)
+        response_payload = {"error": str(exc)}
         _log_http_response("/chat", 500, response_payload)
         return jsonify(response_payload), 500
 
@@ -159,7 +173,9 @@ def chat_stream():
     """SSE-эндпоинт: стримит шаги planning-цикла и финальный ответ."""
     data = request.get_json(silent=True) or {}
     message = data.get("message", "").strip()
-    _log_http_request("/chat/stream", {"message": message})
+    session_id = _get_or_create_session()
+    _log_http_request("/chat/stream", {"message": message, "session_id": session_id})
+
     if not message:
         response_payload = {"error": "Пустое сообщение"}
         _log_http_response("/chat/stream", 400, response_payload)
@@ -182,14 +198,30 @@ def chat_stream():
         def run_worker():
             agent.planner.on_step = on_step
             try:
-                result = agent.chat(message)
+                if agent.df is not None:
+                    result = agent.planner.run(
+                        user_message=message,
+                        df=agent.df,
+                        csv_summary=agent.csv_summary or "",
+                    )
+                else:
+                    result = None
+
+                if result is None:
+                    result = agent.chat(message)
+                    is_planning = False
+                else:
+                    is_planning = True
+
+                save_message(session_id, "user", message, is_planning=False)
+                save_message(session_id, "assistant", result, is_planning=is_planning)
+
                 stream_status["done"] = True
-                logger.info("[CHAT][SSE][DONE] reply_len=%s", len(result))
+                logger.info("[CHAT][SSE][DONE] reply_len=%s planning=%s", len(result), is_planning)
                 events.put(("done", {"text": result}))
             except Exception as exc:
                 logger.exception("[CHAT][SSE] Ошибка обработки: %s", exc)
                 stream_status["error"] = str(exc)
-                logger.error("[CHAT][SSE][ERROR] %s", exc)
                 events.put(("error", {"error": str(exc)}))
             finally:
                 agent.planner.on_step = None
@@ -208,28 +240,126 @@ def chat_stream():
             "/chat/stream",
             200,
             {
+                "session_id": session_id,
                 "done": stream_status["done"],
                 "error": stream_status["error"],
             },
         )
 
-    return Response(
+    response = Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+    return _set_session_cookie(response, session_id)
+
+
+@app.route("/session/restore", methods=["GET"])
+def restore_session():
+    """Восстанавливает состояние агента из БД по session_id cookie."""
+    session_id = request.cookies.get("session_id")
+    _log_http_request("/session/restore", {"session_id": session_id})
+
+    if not session_id or not session_exists(session_id):
+        payload = {"found": False}
+        _log_http_response("/session/restore", 200, payload)
+        return jsonify(payload)
+
+    data = load_session(session_id)
+    if not data:
+        payload = {"found": False}
+        _log_http_response("/session/restore", 200, payload)
+        return jsonify(payload)
+
+    has_messages = bool(data.get("messages"))
+    has_csv_meta = bool(data.get("csv_summary") or data.get("filename") or data.get("csv_path"))
+    if not has_messages and not has_csv_meta:
+        payload = {"found": False}
+        _log_http_response("/session/restore", 200, payload)
+        return jsonify(payload)
+
+    agent.conversation_history = [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in data.get("messages", [])
+    ]
+
+    if data.get("csv_summary"):
+        agent.csv_summary = data.get("csv_summary")
+
+    df_available = False
+    csv_path = data.get("csv_path")
+    filename = data.get("filename")
+    if csv_path and filename:
+        csv_bytes = load_csv_file(csv_path)
+        if csv_bytes is None:
+            logger.warning("[RESTORE] CSV на диске не найден, работаем только со сводкой")
+            df_available = False
+            agent.df = None
+        else:
+            try:
+                restored = agent.load_csv(csv_bytes, filename, restore_mode=True)
+                df_available = bool(restored.get("success"))
+                if not df_available:
+                    logger.warning("[RESTORE] load_csv вернул ошибку: %s", restored.get("error"))
+            except Exception as exc:
+                logger.warning("[RESTORE] Не удалось восстановить DataFrame: %s", exc)
+                df_available = False
+                agent.df = None
+
+    logger.info(
+        "[RESTORE] Сессия восстановлена: %s… сообщений=%s df_available=%s",
+        session_id[:8],
+        len(data.get("messages", [])),
+        df_available,
+    )
+
+    payload = {
+        "found": True,
+        "session_id": session_id,
+        "filename": data.get("filename"),
+        "has_csv": bool(data.get("csv_summary")),
+        "df_available": df_available,
+        "messages": data.get("messages", []),
+    }
+    _log_http_response(
+        "/session/restore",
+        200,
+        {
+            "found": payload["found"],
+            "session_id": payload["session_id"],
+            "messages_count": len(payload["messages"]),
+            "has_csv": payload["has_csv"],
+            "df_available": payload["df_available"],
         },
     )
+    return jsonify(payload)
+
+
+@app.route("/session/new", methods=["POST"])
+def new_session():
+    """Создаёт новую сессию и сбрасывает состояние агента."""
+    sid = create_session()
+    agent.reset()
+    payload = {"session_id": sid, "success": True}
+    response = jsonify(payload)
+    _log_http_response("/session/new", 200, {"success": True, "session_id": sid})
+    return _set_session_cookie(response, sid)
 
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    """Сброс диалога и данных."""
-    logger.info("[RESET] Получен запрос на сброс")
+    """Очищает историю и CSV текущей сессии, затем сбрасывает состояние агента."""
+    session_id = request.cookies.get("session_id")
+    _log_http_request("/reset", {"session_id": session_id})
+
+    if session_id and session_exists(session_id):
+        clear_session_messages(session_id)
+        clear_session_csv(session_id, delete_file=True)
+
     agent.reset()
-    logger.info("[RESET] Состояние агента очищено")
-    return jsonify({"success": True})
+    payload = {"success": True, "cleared": ["history", "csv"]}
+    _log_http_response("/reset", 200, payload)
+    return jsonify(payload)
 
 
 if __name__ == "__main__":

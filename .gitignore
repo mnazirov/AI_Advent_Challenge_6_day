@@ -29,3 +29,7 @@ dist/
 
 # Codex local state
 .codex/
+
+# Local runtime data
+data/
+uploads/

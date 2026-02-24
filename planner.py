@@ -58,7 +58,7 @@ class FinancialPlanner:
         "gpt-4o": {"input": 5.00, "output": 15.00},
     }
 
-    def __init__(self, client: OpenAI, model: str = "gpt-4o-mini"):
+    def __init__(self, client: OpenAI, model: str = "gpt-5.2"):
         self.client = client
         self.model = model
         self.on_step: Callable[[dict[str, str]], None] | None = None
@@ -96,6 +96,14 @@ class FinancialPlanner:
             results.extend(extra_results)
 
         final_text = self._synthesize(goal, results, csv_summary)
+        analysis_facts = self._build_analysis_facts(df)
+        final_text = self._verify_and_fix_plan(
+            draft_text=final_text,
+            goal=goal,
+            analysis_facts=analysis_facts,
+            csv_summary=csv_summary,
+        )
+        final_text = self._sanitize_reply_text(final_text)
 
         latency_total_ms = int((perf_counter() - started_total) * 1000)
         total_tokens = self._run_prompt_tokens + self._run_completion_tokens
@@ -153,7 +161,7 @@ Planning-запрос (needs_planning=true):
             raw, meta = self._call_llm(
                 scope="planner_goal",
                 prompt=prompt,
-                max_tokens=150,
+                max_completion_tokens=150,
                 temperature=0,
             )
             data = self._parse_json(raw, fallback={})
@@ -229,7 +237,7 @@ Planning-запрос (needs_planning=true):
             raw, meta = self._call_llm(
                 scope="planner_decompose",
                 prompt=prompt,
-                max_tokens=400,
+                max_completion_tokens=400,
                 temperature=0,
             )
             parsed = self._parse_json(raw, fallback=[])
@@ -337,7 +345,7 @@ Planning-запрос (needs_planning=true):
                     return "### Топ категорий расходов\n_Нет данных._\n"
 
                 grouped.columns = ["Категория", "Сумма ₽", "Транзакций", "Среднее ₽"]
-                total_sum = grouped["Сумма ₽"].sum() or 0
+                total_sum = float(pd.to_numeric(expenses["amount"], errors="coerce").fillna(0).sum())
                 grouped["% от расходов"] = (
                     (grouped["Сумма ₽"] / total_sum * 100).fillna(0).round(1).astype(str) + "%"
                     if total_sum
@@ -391,11 +399,39 @@ Planning-запрос (needs_planning=true):
                     return "### Детализация категории\n_Не передана категория._\n"
 
                 mask = work_df["category"].astype(str).str.lower().str.contains(cat.lower(), na=False)
-                filtered = work_df[mask].sort_values("amount", ascending=False).head(top_n)
+                filtered_all = work_df[mask].copy()
+                if filtered_all.empty:
+                    return f"### Транзакции «{cat}»\n_Нет данных по категории._\n"
+
+                total_period = float(pd.to_numeric(filtered_all["amount"], errors="coerce").fillna(0).sum())
+                months_with_spending = 0
+                if "date" in filtered_all.columns:
+                    date_series = pd.to_datetime(filtered_all["date"], errors="coerce")
+                    months_with_spending = int(date_series.dt.to_period("M").dropna().nunique())
+                average_per_month = total_period / months_with_spending if months_with_spending > 0 else total_period
+
+                filtered = filtered_all.sort_values("amount", ascending=False).head(top_n)
                 cols = [c for c in ["date", "amount", "description"] if c in filtered.columns]
                 result = filtered[cols]
                 result.columns = ["Дата", "Сумма ₽", "Описание"][: len(cols)]
-                return f"### Транзакции «{cat}» (топ-{top_n})\n" + _df_to_md(result)
+
+                summary_df = pd.DataFrame(
+                    {
+                        "Показатель": ["Сумма за период", "Месяцев с тратами", "Среднее в месяц"],
+                        "Значение": [
+                            f"{total_period:,.0f} ₽".replace(",", " "),
+                            str(months_with_spending) if months_with_spending else "—",
+                            f"{average_per_month:,.0f} ₽".replace(",", " "),
+                        ],
+                    }
+                )
+
+                return (
+                    f"### Транзакции «{cat}»\n"
+                    f"{_df_to_md(summary_df)}\n"
+                    f"### Топ-{top_n} транзакций категории\n"
+                    f"{_df_to_md(result)}"
+                )
 
             if tool == "savings_rate":
                 if "date" not in work_df.columns or "amount" not in work_df.columns:
@@ -586,7 +622,7 @@ Planning-запрос (needs_planning=true):
             raw, meta = self._call_llm(
                 scope="planner_replan",
                 prompt=prompt,
-                max_tokens=300,
+                max_completion_tokens=300,
                 temperature=0,
             )
             parsed = self._parse_json(raw, fallback={})
@@ -698,7 +734,7 @@ PLANNING
             text, meta = self._call_llm(
                 scope="planner_synthesize",
                 prompt=prompt,
-                max_tokens=1500,
+                max_completion_tokens=1500,
                 temperature=0.4,
             )
             if not text.strip():
@@ -739,11 +775,150 @@ PLANNING
                 fallback_lines.append(str(item.get("result", "")))
             return "\n".join(fallback_lines)
 
+    def _verify_and_fix_plan(
+        self,
+        draft_text: str,
+        goal: dict[str, Any],
+        analysis_facts: dict[str, Any],
+        csv_summary: str,
+    ) -> str:
+        """
+        Проверяет итоговый план на числовые несоответствия и при необходимости исправляет его.
+        При сбое возвращает исходный текст.
+        """
+        if not draft_text.strip():
+            return draft_text
+
+        facts_text = self._pretty_json(analysis_facts)
+        summary_short = (csv_summary or "")[:1200]
+        prompt = f"""Ты — верификатор финансового плана.
+
+Проверь согласованность чисел и формулировок в плане с фактами из данных.
+
+ЦЕЛЬ:
+{goal.get("goal_text", "")}
+
+ПЛАН ДЛЯ ПРОВЕРКИ:
+{draft_text}
+
+ФАКТЫ ИЗ ДАННЫХ (источник истины):
+{facts_text}
+
+КРАТКИЙ КОНТЕКСТ:
+{summary_short}
+
+Что проверить:
+1) Нет ли перепутывания "за период" и "в месяц".
+2) Нет ли чисел, противоречащих фактам.
+3) Не изменена ли суть рекомендаций без причины.
+
+Верни ТОЛЬКО валидный JSON:
+{{
+  "is_consistent": true/false,
+  "issues": ["..."],
+  "fixed_text": "исправленный текст или null"
+}}
+"""
+
+        try:
+            raw, _ = self._call_llm(
+                scope="planner_verify",
+                prompt=prompt,
+                max_completion_tokens=1200,
+                temperature=0,
+            )
+            parsed = self._parse_json(raw, fallback={})
+            if not isinstance(parsed, dict):
+                parsed = {}
+
+            is_consistent = bool(parsed.get("is_consistent"))
+            issues_raw = parsed.get("issues")
+            issues = issues_raw if isinstance(issues_raw, list) else []
+            issues = [str(item) for item in issues]
+            fixed_text = parsed.get("fixed_text")
+            fixed_text = fixed_text.strip() if isinstance(fixed_text, str) and fixed_text.strip() else None
+
+            logger.info("[PLANNER][VERIFY] is_consistent=%s issues=%s", is_consistent, issues)
+            if not is_consistent and fixed_text:
+                return fixed_text
+            return draft_text
+        except Exception as exc:
+            logger.warning("[PLANNER][VERIFY] Ошибка: %s", exc)
+            return draft_text
+
+    def _build_analysis_facts(self, df: pd.DataFrame) -> dict[str, Any]:
+        """Строит компактные факт-агрегаты для верификации числовых утверждений."""
+        facts: dict[str, Any] = {
+            "rows": int(len(df)),
+            "total_income": None,
+            "total_expenses": None,
+            "months_total": 0,
+            "categories": [],
+        }
+
+        work_df = df.copy()
+        if "date" in work_df.columns:
+            parsed_dates = pd.to_datetime(work_df["date"], errors="coerce")
+            facts["months_total"] = int(parsed_dates.dt.to_period("M").dropna().nunique())
+        else:
+            parsed_dates = pd.Series([pd.NaT] * len(work_df))
+
+        if "amount" in work_df.columns and "op_type" in work_df.columns:
+            income = pd.to_numeric(work_df.loc[work_df["op_type"] == "доход", "amount"], errors="coerce").dropna()
+            expenses = pd.to_numeric(work_df.loc[work_df["op_type"] == "расход", "amount"], errors="coerce").dropna()
+            facts["total_income"] = float(income.sum()) if not income.empty else 0.0
+            facts["total_expenses"] = float(expenses.sum()) if not expenses.empty else 0.0
+
+        if {"category", "amount", "op_type"}.issubset(set(work_df.columns)):
+            expenses_df = work_df[work_df["op_type"] == "расход"].copy()
+            if not expenses_df.empty:
+                expenses_df["amount"] = pd.to_numeric(expenses_df["amount"], errors="coerce").fillna(0)
+                if "date" in expenses_df.columns:
+                    expenses_df["_date_parsed"] = pd.to_datetime(expenses_df["date"], errors="coerce")
+                    expenses_df["_month"] = expenses_df["_date_parsed"].dt.to_period("M")
+                else:
+                    expenses_df["_month"] = pd.NaT
+
+                grouped = (
+                    expenses_df.groupby("category", dropna=False)["amount"]
+                    .sum()
+                    .sort_values(ascending=False)
+                    .head(20)
+                )
+
+                categories: list[dict[str, Any]] = []
+                for category_name, total_sum in grouped.items():
+                    cat_mask = expenses_df["category"] == category_name
+                    months_with_spending = int(
+                        expenses_df.loc[cat_mask, "_month"].dropna().nunique()
+                    )
+                    avg_month = float(total_sum) / months_with_spending if months_with_spending else float(total_sum)
+                    categories.append(
+                        {
+                            "category": str(category_name) if pd.notna(category_name) else "Без категории",
+                            "sum_period": float(total_sum),
+                            "months_with_spending": months_with_spending,
+                            "avg_per_month": avg_month,
+                        }
+                    )
+
+                facts["categories"] = categories
+
+        return facts
+
+    def _sanitize_reply_text(self, text: str) -> str:
+        """Удаляет markdown-heading маркеры и нормализует лишние пустые строки."""
+        if not text:
+            return ""
+        sanitized = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", str(text))
+        sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+        return sanitized.strip()
+
     def _call_llm(
         self,
         scope: str,
         prompt: str,
-        max_tokens: int,
+        max_completion_tokens: int,
         temperature: float,
     ) -> tuple[str, dict[str, Any]]:
         """Выполняет вызов LLM и возвращает текст + метрики."""
@@ -752,7 +927,7 @@ PLANNING
             scope=scope,
             model=self.model,
             messages=messages,
-            max_tokens=max_tokens,
+            max_completion_tokens=max_completion_tokens,
             temperature=temperature,
         )
 
@@ -761,7 +936,7 @@ PLANNING
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                max_tokens=max_tokens,
+                max_completion_tokens=max_completion_tokens,
                 temperature=temperature,
             )
         except Exception as exc:
@@ -771,7 +946,7 @@ PLANNING
                 messages_count=len(messages),
                 error=exc,
                 extra={
-                    "max_tokens": max_tokens,
+                    "max_completion_tokens": max_completion_tokens,
                     "temperature": temperature,
                 },
             )
@@ -906,7 +1081,7 @@ PLANNING
         scope: str,
         model: str,
         messages: list[dict[str, str]],
-        max_tokens: int,
+        max_completion_tokens: int,
         temperature: float,
         extra: dict[str, Any] | None = None,
     ) -> None:
@@ -916,7 +1091,7 @@ PLANNING
             "model": model,
             "messages_count": len(messages),
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
         }
         if extra:

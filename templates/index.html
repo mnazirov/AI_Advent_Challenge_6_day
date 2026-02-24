@@ -327,6 +327,37 @@ body::before {
   font-size: 0.78rem;
 }
 
+.bubble .md-table-wrap {
+  margin: 10px 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.bubble table.md-table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: normal;
+  font-size: 0.78rem;
+}
+
+.bubble table.md-table th,
+.bubble table.md-table td {
+  padding: 7px 9px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.bubble table.md-table th {
+  font-weight: 600;
+  color: var(--gold);
+  background: rgba(232, 201, 109, 0.06);
+}
+
+.bubble table.md-table tr:last-child td {
+  border-bottom: none;
+}
+
 .msg.user .bubble {
   background: linear-gradient(135deg, #192b54, #1c3068);
   border: 1px solid rgba(91,156,246,0.18);
@@ -535,9 +566,337 @@ textarea::placeholder { color: var(--muted); }
   transition: width 0.4s ease;
   width: 0%;
 }
+
+/* ── PAGE LOADER ── */
+#pageLoader {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+
+#pageLoader.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#pageLoader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+
+#pageLoader::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -60%);
+  width: 600px;
+  height: 400px;
+  background: radial-gradient(ellipse, rgba(232,201,109,0.07) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+.loader-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  animation: fadeup 0.5s ease both;
+}
+
+.loader-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.loader-orb {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 33% 33%, #f5e07a, #c9a84c 55%, #7d5e18);
+  box-shadow: 0 0 48px rgba(232,201,109,0.45), 0 0 100px rgba(232,201,109,0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  animation: float 3.5s ease-in-out infinite;
+  position: relative;
+}
+
+.loader-orb::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  border-top-color: rgba(232,201,109,0.5);
+  border-right-color: rgba(232,201,109,0.15);
+  animation: spin-slow 2.4s linear infinite;
+}
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+.loader-brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.loader-brand span { color: var(--gold); }
+
+.loader-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.loader-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 52px;
+  padding: 0 4px;
+}
+
+.candle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  animation: candle-grow 2s ease-in-out infinite;
+}
+
+.candle-wick {
+  width: 1.5px;
+  border-radius: 1px;
+  background: rgba(232,201,109,0.35);
+}
+
+.candle-body {
+  width: 9px;
+  border-radius: 2px;
+}
+
+.candle.bull .candle-body {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(76,201,138,0.4);
+}
+
+.candle.bear .candle-body {
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(240,110,110,0.3);
+}
+
+@keyframes candle-grow {
+  0%, 100% { transform: scaleY(1); opacity: 0.7; }
+  50% { transform: scaleY(1.12); opacity: 1; }
+}
+
+.candle:nth-child(1)  { animation-delay: 0.00s; }
+.candle:nth-child(2)  { animation-delay: 0.12s; }
+.candle:nth-child(3)  { animation-delay: 0.24s; }
+.candle:nth-child(4)  { animation-delay: 0.36s; }
+.candle:nth-child(5)  { animation-delay: 0.48s; }
+.candle:nth-child(6)  { animation-delay: 0.60s; }
+.candle:nth-child(7)  { animation-delay: 0.72s; }
+.candle:nth-child(8)  { animation-delay: 0.84s; }
+.candle:nth-child(9)  { animation-delay: 0.96s; }
+.candle:nth-child(10) { animation-delay: 1.08s; }
+
+.loader-chart-line {
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(232,201,109,0.2), transparent);
+}
+
+.loader-status-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 280px;
+}
+
+.loader-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.loader-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  opacity: 0.3;
+  transition: opacity 0.35s ease, color 0.35s ease;
+}
+
+.loader-step.active {
+  opacity: 1;
+  color: var(--text);
+}
+
+.loader-step.done {
+  opacity: 0.65;
+  color: var(--green);
+}
+
+.loader-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+  transition: background 0.35s ease, box-shadow 0.35s ease;
+}
+
+.loader-step.active .loader-step-dot {
+  background: var(--gold);
+  box-shadow: 0 0 8px var(--gold);
+  animation: glowpulse 1.1s ease-in-out infinite;
+}
+
+.loader-step.done .loader-step-dot {
+  background: var(--green);
+  box-shadow: none;
+}
+
+.loader-step-label { flex: 1; }
+
+.loader-step-check {
+  font-size: 0.65rem;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.loader-step.done .loader-step-check {
+  opacity: 1;
+  color: var(--green);
+}
+
+.loader-bar {
+  width: 100%;
+  height: 2px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.loader-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #c9a84c, #f0d878, #c9a84c);
+  background-size: 200% 100%;
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.5s ease;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+/* Session restored hint */
+.session-hint {
+  text-align: center;
+  padding: 6px 16px;
+  font-size: 0.69rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  margin: 0 auto;
+  width: fit-content;
+  background: var(--s2);
+  animation: fadeup 0.4s ease;
+}
+
+.session-hint span {
+  color: var(--gold-dim);
+  font-weight: 500;
+}
+
+.session-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.session-divider::before,
+.session-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
 </style>
 </head>
 <body>
+<div id="pageLoader">
+  <div class="loader-inner">
+    <div class="loader-logo">
+      <div class="loader-orb">💰</div>
+      <div class="loader-brand">Финансовый <span>советник</span></div>
+    </div>
+    <div class="loader-chart-wrap">
+      <div class="loader-chart" id="loaderChart"></div>
+      <div class="loader-chart-line"></div>
+    </div>
+    <div class="loader-status-wrap">
+      <div class="loader-steps">
+        <div class="loader-step" id="lstep-connect">
+          <div class="loader-step-dot"></div>
+          <span class="loader-step-label">Соединение с сервером</span>
+          <span class="loader-step-check">✓</span>
+        </div>
+        <div class="loader-step" id="lstep-session">
+          <div class="loader-step-dot"></div>
+          <span class="loader-step-label">Проверка сессии</span>
+          <span class="loader-step-check">✓</span>
+        </div>
+        <div class="loader-step" id="lstep-history">
+          <div class="loader-step-dot"></div>
+          <span class="loader-step-label">Загрузка истории диалога</span>
+          <span class="loader-step-check">✓</span>
+        </div>
+        <div class="loader-step" id="lstep-data">
+          <div class="loader-step-dot"></div>
+          <span class="loader-step-label">Восстановление данных CSV</span>
+          <span class="loader-step-check">✓</span>
+        </div>
+        <div class="loader-step" id="lstep-ready">
+          <div class="loader-step-dot"></div>
+          <span class="loader-step-label">Готов к работе</span>
+          <span class="loader-step-check">✓</span>
+        </div>
+      </div>
+      <div class="loader-bar"><div class="loader-bar-fill" id="loaderBarFill"></div></div>
+    </div>
+  </div>
+</div>
 <div class="shell">
 
   <!-- SIDEBAR -->
@@ -573,7 +932,7 @@ textarea::placeholder { color: var(--muted); }
         <div class="fbadge-icon">✅</div>
         <div style="flex:1;min-width:0">
           <div class="fbadge-name" id="badgeName">—</div>
-          <div class="fbadge-ok">Загружен и проанализирован</div>
+          <div class="fbadge-ok" id="badgeStatus">Загружен и проанализирован</div>
         </div>
       </div>
 
@@ -591,7 +950,7 @@ textarea::placeholder { color: var(--muted); }
 
       <button class="reset-btn" onclick="resetChat()">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-        Начать заново
+        Очистить историю и CSV
       </button>
 
     </div>
@@ -605,7 +964,7 @@ textarea::placeholder { color: var(--muted); }
         <div class="header-avatar">💰</div>
         <span class="header-title">Финансовый консультант</span>
       </div>
-      <span class="header-model">gpt-4o-mini</span>
+      <span class="header-model">gpt-5.2</span>
     </div>
 
     <div class="messages" id="messages">
@@ -641,6 +1000,132 @@ textarea::placeholder { color: var(--muted); }
 </div>
 
 <script>
+  /* ── Page Loader ── */
+  const LOADER_PROGRESS = { connect: 10, session: 35, history: 65, data: 85, ready: 100 };
+
+  function buildLoaderChart() {
+    const chart = document.getElementById('loaderChart');
+    if (!chart || chart.children.length) return;
+
+    const candles = [
+      { bull: true, body: 22, wickT: 6, wickB: 4 },
+      { bull: false, body: 14, wickT: 5, wickB: 8 },
+      { bull: true, body: 18, wickT: 8, wickB: 3 },
+      { bull: true, body: 28, wickT: 5, wickB: 6 },
+      { bull: false, body: 12, wickT: 4, wickB: 7 },
+      { bull: true, body: 34, wickT: 7, wickB: 4 },
+      { bull: false, body: 16, wickT: 9, wickB: 5 },
+      { bull: true, body: 24, wickT: 4, wickB: 3 },
+      { bull: true, body: 38, wickT: 6, wickB: 5 },
+      { bull: false, body: 10, wickT: 5, wickB: 4 },
+    ];
+
+    candles.forEach((c) => {
+      const el = document.createElement('div');
+      el.className = `candle ${c.bull ? 'bull' : 'bear'}`;
+      el.innerHTML = `
+        <div class="candle-wick" style="height:${c.wickT}px"></div>
+        <div class="candle-body" style="height:${c.body}px"></div>
+        <div class="candle-wick" style="height:${c.wickB}px"></div>
+      `;
+      chart.appendChild(el);
+    });
+  }
+
+  function setLoaderStep(step, state) {
+    const el = document.getElementById(`lstep-${step}`);
+    if (!el) return;
+    el.classList.remove('active', 'done');
+    el.classList.add(state);
+
+    const bar = document.getElementById('loaderBarFill');
+    if (!bar) return;
+    if (state === 'done') {
+      bar.style.width = `${LOADER_PROGRESS[step] || 0}%`;
+    } else if (state === 'active') {
+      bar.style.width = `${Math.max((LOADER_PROGRESS[step] || 0) - 15, 0)}%`;
+    }
+  }
+
+  function hidePageLoader() {
+    setLoaderStep('ready', 'active');
+    setTimeout(() => {
+      setLoaderStep('ready', 'done');
+      setTimeout(() => {
+        const loader = document.getElementById('pageLoader');
+        if (loader) loader.classList.add('hidden');
+      }, 350);
+    }, 260);
+  }
+
+  /* ── Session Management ── */
+  let currentSessionId = null;
+
+  window.addEventListener('DOMContentLoaded', async () => {
+    buildLoaderChart();
+    setLoaderStep('connect', 'active');
+    setTimeout(() => setLoaderStep('connect', 'done'), 160);
+    await restoreSession();
+  });
+
+  async function restoreSession() {
+    setLoaderStep('session', 'active');
+    try {
+      const res = await fetch('/session/restore');
+      const data = await res.json();
+      setLoaderStep('session', 'done');
+
+      if (!data.found) {
+        setLoaderStep('history', 'done');
+        setLoaderStep('data', 'done');
+        return;
+      }
+
+      currentSessionId = data.session_id || null;
+      hideWelcome();
+
+      const box = document.getElementById('messages');
+      const messages = Array.isArray(data.messages) ? data.messages : [];
+
+      setLoaderStep('history', 'active');
+      if (messages.length > 0) {
+        const hint = document.createElement('div');
+        hint.className = 'session-hint';
+        hint.innerHTML = '↩ История диалога <span>восстановлена</span>';
+        box.appendChild(hint);
+
+        messages.forEach((m) => {
+          const role = m.role === 'user' ? 'user' : 'bot';
+          addMsg(role, m.content || '');
+        });
+
+        const divider = document.createElement('div');
+        divider.className = 'session-divider';
+        divider.textContent = 'Продолжение сессии';
+        box.appendChild(divider);
+      }
+      setLoaderStep('history', 'done');
+
+      setLoaderStep('data', 'active');
+      if (data.filename) {
+        if (data.df_available === false) {
+          showBadge(data.filename, 'данные только из сводки');
+        } else {
+          showBadge(data.filename, 'Загружен и проанализирован');
+        }
+      }
+      setLoaderStep('data', 'done');
+
+      box.scrollTop = box.scrollHeight;
+    } catch (err) {
+      console.warn('Не удалось восстановить сессию:', err);
+      setLoaderStep('history', 'done');
+      setLoaderStep('data', 'done');
+    } finally {
+      hidePageLoader();
+    }
+  }
+
   /* ── Drag & Drop ── */
   const zone = document.getElementById('uploadZone');
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
@@ -672,8 +1157,9 @@ textarea::placeholder { color: var(--muted); }
     }
   }
 
-  function showBadge(name) {
+  function showBadge(name, statusText = 'Загружен и проанализирован') {
     document.getElementById('badgeName').textContent = name;
+    document.getElementById('badgeStatus').textContent = statusText;
     document.getElementById('fileBadge').classList.add('visible');
   }
 
@@ -696,13 +1182,57 @@ textarea::placeholder { color: var(--muted); }
   }
 
   function fmt(n) { return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n); }
-  function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  function renderBasicMarkdown(text) {
-    const safe = esc(String(text || ''));
-    return safe
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function renderInlineMarkdown(s) {
+    return esc(s)
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
       .replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+  function renderBasicMarkdown(text) {
+    const raw = String(text || '').replace(/^\s{0,3}#{1,6}\s+/gm, '');
+    const lines = raw.split('\n');
+    const out = [];
+
+    const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line);
+    const isTableSeparator = (line) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+    const parseCells = (line) =>
+      line
+        .trim()
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((c) => c.trim());
+
+    let i = 0;
+    while (i < lines.length) {
+      if (i + 1 < lines.length && isTableRow(lines[i]) && isTableSeparator(lines[i + 1])) {
+        const header = parseCells(lines[i]);
+        const rows = [];
+        i += 2;
+
+        while (i < lines.length && isTableRow(lines[i])) {
+          const row = parseCells(lines[i]);
+          rows.push(row);
+          i += 1;
+        }
+
+        const thead = `<tr>${header.map((h) => `<th>${renderInlineMarkdown(h)}</th>`).join('')}</tr>`;
+        const tbody = rows
+          .map((row) => {
+            const padded = header.map((_, idx) => row[idx] ?? '—');
+            return `<tr>${padded.map((c) => `<td>${renderInlineMarkdown(c)}</td>`).join('')}</tr>`;
+          })
+          .join('');
+        out.push(`<div class="md-table-wrap"><table class="md-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`);
+        continue;
+      }
+
+      out.push(renderInlineMarkdown(lines[i]));
+      i += 1;
+    }
+
+    return out.join('\n');
   }
 
   const PLANNING_STEPS_CONFIG = [

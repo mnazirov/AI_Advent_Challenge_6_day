@@ -211,7 +211,7 @@ SCHEMA_MAP = {
 }
 
 SCHEMA_MAP_INCOME_COL = ["приход", "зачисление", "credit", "доход", "пополнение", "income"]
-SCHEMA_MAP_EXPENSE_COL = ["расход", "списание", "debit", "трата", "расходы", "expense"]
+SCHEMA_MAP_EXPENSE_COL = ["расход", "списание", "debit", "трата", "расходы", "expense", "outcome"]
 
 INCOME_WORDS = {"доход", "income", "приход", "зачисление", "credit", "пополнение", "+"}
 EXPENSE_WORDS = {"расход", "expense", "списание", "debit", "трата", "покупка", "-"}
@@ -222,6 +222,7 @@ class FinancialAgent:
     """Финансовый агент: загрузка CSV, нормализация схемы и чат с LLM."""
 
     MAX_HISTORY_MESSAGES = 20
+    PLANNING_CONFIDENCE_THRESHOLD = 0.75
     COST_PER_1M = {
         "gpt-4o-mini": {"input": 0.15, "output": 0.60},
         "gpt-4o": {"input": 5.00, "output": 15.00},
@@ -231,7 +232,7 @@ class FinancialAgent:
         """Инициализирует клиент OpenAI и состояние сессии."""
         self._load_env_if_needed()
         self.client = OpenAI()
-        self.model = "gpt-4o-mini"
+        self.model = "gpt-5.2"
         self.planner = FinancialPlanner(client=self.client, model=self.model)
         self.conversation_history: list[dict[str, str]] = []
         self.csv_summary: str | None = None
@@ -239,8 +240,12 @@ class FinancialAgent:
         self._last_encoding: str | None = None
         logger.info("[INIT] FinancialAgent инициализирован model=%s", self.model)
 
-    def load_csv(self, file_content: bytes, filename: str) -> dict:
-        """Выполняет полный пайплайн обработки CSV (шаги 1-6)."""
+    def load_csv(self, file_content: bytes, filename: str, restore_mode: bool = False) -> dict:
+        """
+        Выполняет полный пайплайн обработки CSV (шаги 1-6).
+
+        При restore_mode=True загружает DataFrame без сброса истории диалога.
+        """
         try:
             text = self._decode(file_content)
             delimiter = self._detect_delimiter(text)
@@ -255,6 +260,7 @@ class FinancialAgent:
                 schema = self._keyword_detect_schema(df)
                 schema_source = "keyword"
 
+            schema = self._enrich_split_schema(schema, df)
             logger.info("[SCHEMA] Источник=%s", schema_source)
 
             normalized_df = self._apply_schema(df, schema)
@@ -271,8 +277,11 @@ class FinancialAgent:
 
             summary = self._build_toon_summary(normalized_df, filename)
             self.df = normalized_df
-            self.csv_summary = summary
-            self.conversation_history = []
+            if restore_mode:
+                self.csv_summary = summary
+            else:
+                self.csv_summary = summary
+                self.conversation_history = []
 
             total_income, total_expenses = self._compute_totals(normalized_df)
 
@@ -319,20 +328,35 @@ class FinancialAgent:
         3. Детали добавляются к сообщению пользователя
         4. Основной LLM-вызов с обогащённым контекстом
         """
-        # Делегируем planning-запросы отдельному агенту-планировщику.
+        # Делегируем planning-запросы только если это подтвердил отдельный LLM-роутер.
+        planning_decision = {"needs_planning": False, "confidence": 0.0, "reason": "df_not_loaded"}
         if self.df is not None:
-            planning_result = self.planner.run(
-                user_message=user_message,
-                df=self.df,
-                csv_summary=self.csv_summary or "",
+            planning_decision = self._route_planning(user_message)
+            use_planner = (
+                bool(planning_decision.get("needs_planning"))
+                and float(planning_decision.get("confidence", 0.0) or 0.0) >= self.PLANNING_CONFIDENCE_THRESHOLD
             )
-            if planning_result is not None:
-                self.conversation_history.append({"role": "user", "content": user_message})
-                self.conversation_history.append({"role": "assistant", "content": planning_result})
-                if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
-                    self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES :]
-                logger.info("[CHAT] Ответ сформирован через Planning Agent")
-                return planning_result
+            logger.info(
+                "[CHAT][ROUTE] planner=%s confidence=%.2f threshold=%.2f reason=%s",
+                use_planner,
+                float(planning_decision.get("confidence", 0.0) or 0.0),
+                self.PLANNING_CONFIDENCE_THRESHOLD,
+                planning_decision.get("reason", ""),
+            )
+            if use_planner:
+                planning_result = self.planner.run(
+                    user_message=user_message,
+                    df=self.df,
+                    csv_summary=self.csv_summary or "",
+                )
+                if planning_result is not None:
+                    planning_result = self._sanitize_reply_text(planning_result)
+                    self.conversation_history.append({"role": "user", "content": user_message})
+                    self.conversation_history.append({"role": "assistant", "content": planning_result})
+                    if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
+                        self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES :]
+                    logger.info("[CHAT] Ответ сформирован через Planning Agent")
+                    return planning_result
 
         detail_block = ""
         route_decision = {"needs_data": False, "queries": []}
@@ -371,7 +395,7 @@ class FinancialAgent:
             "model": self.model,
             "messages_count": len(messages),
             "temperature": 0.7,
-            "max_tokens": 1024,
+            "max_completion_tokens": 1024,
             "enriched": enriched_flag,
             "messages": messages,
         }
@@ -383,7 +407,7 @@ class FinancialAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                max_tokens=1024,
+                max_completion_tokens=1024,
                 temperature=0.7,
             )
         except Exception as exc:
@@ -392,7 +416,7 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": len(messages),
                 "temperature": 0.7,
-                "max_tokens": 1024,
+                "max_completion_tokens": 1024,
                 "enriched": enriched_flag,
                 "error": str(exc),
             }
@@ -401,7 +425,7 @@ class FinancialAgent:
 
         latency_ms = int((perf_counter() - started_at) * 1000)
 
-        assistant_message = response.choices[0].message.content or ""
+        assistant_message = self._sanitize_reply_text(response.choices[0].message.content or "")
         self.conversation_history.append({"role": "assistant", "content": assistant_message})
         if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
             self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES :]
@@ -450,6 +474,114 @@ class FinancialAgent:
         self.csv_summary = None
         self.df = None
         self.planner.on_step = None
+
+    def _route_planning(self, user_message: str) -> dict:
+        """
+        Отдельный LLM-роутер: определяет, нужен ли planning-режим для запроса.
+        Возвращает needs_planning, confidence и reason.
+        """
+        if self.df is None:
+            return {"needs_planning": False, "confidence": 0.0, "reason": "df_not_loaded"}
+
+        summary_short = (self.csv_summary or "")[:600]
+        prompt = f"""Ты — Router финансового ассистента.
+Твоя задача: определить, требуется ли для ответа ПОЛНЫЙ planning-режим (многошаговый план), или достаточно обычного краткого ответа.
+
+Запрос пользователя:
+"{user_message}"
+
+Краткий контекст данных:
+{summary_short}
+
+Правило:
+- needs_planning=true только когда пользователь явно или по смыслу просит составить план действий/стратегию/пошаговый roadmap.
+- needs_planning=false для аналитики, уточнений, коротких реакций, вопросов по фактам и комментариев.
+
+Ответь ТОЛЬКО валидным JSON:
+{{
+  "needs_planning": true/false,
+  "confidence": 0.0,
+  "reason": "краткая причина"
+}}"""
+
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            request_payload = {
+                "scope": "planning_router",
+                "model": self.model,
+                "messages_count": len(messages),
+                "temperature": 0,
+                "max_completion_tokens": 120,
+                "messages": messages,
+            }
+            logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
+
+            started_at = perf_counter()
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_completion_tokens=120,
+                temperature=0,
+            )
+            latency_ms = int((perf_counter() - started_at) * 1000)
+
+            raw = (response.choices[0].message.content or "").strip()
+            usage = getattr(response, "usage", None)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
+            cost_usd = self._estimate_cost(prompt_tokens, completion_tokens)
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+
+            response_payload = {
+                "scope": "planning_router",
+                "id": getattr(response, "id", None),
+                "model": getattr(response, "model", self.model),
+                "finish_reason": finish_reason,
+                "usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+                "latency_ms": latency_ms,
+                "cost_usd": cost_usd,
+                "assistant_message": raw,
+            }
+            logger.info("[API][OpenAI][Ответ]\n%s", self._pretty_json(response_payload))
+
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if not json_match:
+                raise ValueError("JSON не найден в ответе planning router")
+
+            parsed = json.loads(json_match.group())
+            if not isinstance(parsed, dict):
+                raise ValueError("planning router вернул не dict")
+
+            confidence = parsed.get("confidence", 0.0)
+            try:
+                confidence = float(confidence)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = max(0.0, min(1.0, confidence))
+
+            decision = {
+                "needs_planning": bool(parsed.get("needs_planning")),
+                "confidence": confidence,
+                "reason": str(parsed.get("reason") or ""),
+            }
+            return decision
+        except Exception as exc:
+            error_payload = {
+                "scope": "planning_router",
+                "model": self.model,
+                "messages_count": 1,
+                "temperature": 0,
+                "max_completion_tokens": 120,
+                "error": str(exc),
+            }
+            logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
+            logger.warning("[CHAT][ROUTE] planning router error: %s", exc)
+            return {"needs_planning": False, "confidence": 0.0, "reason": "router_error"}
 
     def _route(self, user_message: str) -> dict:
         """
@@ -525,7 +657,7 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": len(route_messages),
                 "temperature": 0,
-                "max_tokens": 200,
+                "max_completion_tokens": 200,
                 "messages": route_messages,
             }
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
@@ -534,7 +666,7 @@ class FinancialAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=route_messages,
-                max_tokens=200,
+                max_completion_tokens=200,
                 temperature=0,
             )
             latency_ms = int((perf_counter() - started_at) * 1000)
@@ -601,7 +733,7 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "max_tokens": 200,
+                "max_completion_tokens": 200,
                 "error": str(exc),
             }
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
@@ -822,7 +954,7 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "max_tokens": 300,
+                "max_completion_tokens": 300,
                 "messages": [{"role": "user", "content": prompt}],
             }
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
@@ -831,7 +963,7 @@ class FinancialAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
+                max_completion_tokens=300,
                 temperature=0,
                 timeout=8,
             )
@@ -920,7 +1052,7 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "max_tokens": 300,
+                "max_completion_tokens": 300,
                 "error": str(exc),
             }
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
@@ -1003,6 +1135,49 @@ class FinancialAgent:
 
         logger.info("[SCHEMA][KEYWORD] Маппинг: %s", schema)
         return schema
+
+    def _enrich_split_schema(self, schema: dict, df: pd.DataFrame) -> dict:
+        """
+        Достраивает split-схему (income/expense колонки), если она распознана неполно.
+        Это нужно для CSV, где доходы и расходы хранятся в разных столбцах.
+        """
+        if not isinstance(schema, dict):
+            return schema
+
+        result = dict(schema)
+        if result.get("amount_sign") == "split_cols":
+            return result
+
+        cols_norm = {str(col).strip().lower(): col for col in df.columns}
+        income_col = result.get("income_col")
+        expense_col = result.get("expense_col")
+
+        def find_col(keywords: list[str]) -> str | None:
+            for kw in keywords:
+                kw_l = kw.strip().lower()
+                if kw_l in cols_norm:
+                    return cols_norm[kw_l]
+                for norm_name, orig_name in cols_norm.items():
+                    if kw_l in norm_name:
+                        return orig_name
+            return None
+
+        if not income_col:
+            income_col = find_col(SCHEMA_MAP_INCOME_COL)
+        if not expense_col:
+            expense_col = find_col(SCHEMA_MAP_EXPENSE_COL)
+
+        if income_col and expense_col and income_col != expense_col:
+            result["income_col"] = income_col
+            result["expense_col"] = expense_col
+            result["amount_sign"] = "split_cols"
+            logger.info(
+                "[SCHEMA] Авто-достроена split-схема: income_col=%s expense_col=%s",
+                income_col,
+                expense_col,
+            )
+
+        return result
 
     def _is_id_column(self, series: pd.Series) -> bool:
         """Проверяет что колонка является ID или порядковым номером, а не суммой."""
@@ -1458,3 +1633,11 @@ class FinancialAgent:
             return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
         except Exception:
             return str(payload)
+
+    def _sanitize_reply_text(self, text: str) -> str:
+        """Удаляет markdown-heading маркеры и нормализует формат ответа."""
+        if not text:
+            return ""
+        sanitized = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", str(text))
+        sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+        return sanitized.strip()
