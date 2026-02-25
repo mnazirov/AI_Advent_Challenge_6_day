@@ -2,15 +2,18 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from agent import FinancialAgent
 from storage import (
+    add_usage,
     clear_session_csv,
     clear_session_messages,
     create_session,
+    get_latest_session_id,
     init_db,
     load_csv_file,
     load_session,
@@ -70,11 +73,29 @@ def _log_http_response(route: str, status_code: int, payload: dict) -> None:
     logger.info("[HTTP][Ответ]\n%s", _pretty_json(log_payload))
 
 
+def _extract_context_overflow(error_text: str) -> dict | None:
+    """Пытается извлечь фактический размер контекста из ошибки превышения лимита."""
+    if not error_text:
+        return None
+    max_match = re.search(r"maximum context length is (\d+) tokens", error_text)
+    used_match = re.search(r"messages resulted in (\d+) tokens", error_text)
+    if not max_match and not used_match:
+        return None
+    return {
+        "context_limit": int(max_match.group(1)) if max_match else 0,
+        "prompt_tokens": int(used_match.group(1)) if used_match else 0,
+    }
+
+
 def _get_or_create_session() -> str:
     """Читает session_id из cookie или создаёт новую сессию."""
     sid = request.cookies.get("session_id")
     if sid and session_exists(sid):
         return sid
+    latest_sid = get_latest_session_id()
+    if latest_sid and session_exists(latest_sid):
+        logger.info("[SESSION] Cookie не найдена, использую последнюю сессию: %s…", latest_sid[:8])
+        return latest_sid
     return create_session()
 
 
@@ -118,6 +139,14 @@ def upload_csv():
     result = agent.load_csv(content, file.filename)
 
     if result.get("success"):
+        schema_stats = agent.last_schema_token_stats or {}
+        if schema_stats:
+            add_usage(
+                session_id,
+                tokens_in=int(schema_stats.get("prompt_tokens", 0) or 0),
+                tokens_out=int(schema_stats.get("completion_tokens", 0) or 0),
+                cost_usd=float(schema_stats.get("cost_usd", 0.0) or 0.0),
+            )
         save_csv_meta(
             session_id=session_id,
             filename=file.filename,
@@ -126,6 +155,8 @@ def upload_csv():
             csv_path=csv_path,
         )
 
+    if result.get("success"):
+        result["token_stats"] = agent.last_schema_token_stats or {}
     response = jsonify(result)
     _log_http_response(
         "/upload",
@@ -156,16 +187,48 @@ def chat():
     try:
         reply = agent.chat(message)
         save_message(session_id, "user", message)
-        save_message(session_id, "assistant", reply)
+        token_stats = agent.last_token_stats or {}
+        save_message(
+            session_id,
+            "assistant",
+            reply,
+            tokens_in=int(token_stats.get("prompt_tokens", 0) or 0),
+            tokens_out=int(token_stats.get("completion_tokens", 0) or 0),
+            cost_usd=float(token_stats.get("cost_usd", 0.0) or 0.0),
+        )
 
-        response = jsonify({"reply": reply})
-        _log_http_response("/chat", 200, {"session_id": session_id, "reply_len": len(reply)})
+        response_payload = {"reply": reply, "token_stats": token_stats}
+        response = jsonify(response_payload)
+        _log_http_response(
+            "/chat",
+            200,
+            {
+                "session_id": session_id,
+                "reply_len": len(reply),
+                "token_stats": token_stats,
+            },
+        )
         return _set_session_cookie(response, session_id)
     except Exception as exc:
         logger.exception("[CHAT] Ошибка обработки запроса чата: %s", exc)
-        response_payload = {"error": str(exc)}
-        _log_http_response("/chat", 500, response_payload)
-        return jsonify(response_payload), 500
+        err_text = str(exc)
+        overflow = _extract_context_overflow(err_text)
+        response_payload = {"error": err_text}
+        status = 500
+        if overflow:
+            response_payload["token_stats"] = {
+                "prompt_tokens": int(overflow.get("prompt_tokens") or 0),
+                "completion_tokens": 0,
+                "total_tokens": int(overflow.get("prompt_tokens") or 0),
+                "cost_usd": 0.0,
+                "latency_ms": 0,
+                "scope": "chat",
+                "error": True,
+                "context_limit": int(overflow.get("context_limit") or 0),
+            }
+            status = 400
+        _log_http_response("/chat", status, response_payload)
+        return jsonify(response_payload), status
 
 
 @app.route("/chat/stream", methods=["POST"])
@@ -198,7 +261,7 @@ def chat_stream():
         def run_worker():
             agent.planner.on_step = on_step
             try:
-                if agent.df is not None:
+                if agent.df is not None and getattr(agent, "ENABLE_PLANNING_ROUTER", False):
                     result = agent.planner.run(
                         user_message=message,
                         df=agent.df,
@@ -212,17 +275,41 @@ def chat_stream():
                     is_planning = False
                 else:
                     is_planning = True
+                    agent.last_token_stats = getattr(agent.planner, "last_run_token_stats", None) or {}
 
                 save_message(session_id, "user", message, is_planning=False)
-                save_message(session_id, "assistant", result, is_planning=is_planning)
+                token_stats = agent.last_token_stats or {}
+                save_message(
+                    session_id,
+                    "assistant",
+                    result,
+                    is_planning=is_planning,
+                    tokens_in=int(token_stats.get("prompt_tokens", 0) or 0),
+                    tokens_out=int(token_stats.get("completion_tokens", 0) or 0),
+                    cost_usd=float(token_stats.get("cost_usd", 0.0) or 0.0),
+                )
 
                 stream_status["done"] = True
                 logger.info("[CHAT][SSE][DONE] reply_len=%s planning=%s", len(result), is_planning)
-                events.put(("done", {"text": result}))
+                events.put(("done", {"text": result, "token_stats": token_stats}))
             except Exception as exc:
                 logger.exception("[CHAT][SSE] Ошибка обработки: %s", exc)
-                stream_status["error"] = str(exc)
-                events.put(("error", {"error": str(exc)}))
+                err_text = str(exc)
+                stream_status["error"] = err_text
+                payload = {"error": err_text}
+                overflow = _extract_context_overflow(err_text)
+                if overflow:
+                    payload["token_stats"] = {
+                        "prompt_tokens": int(overflow.get("prompt_tokens") or 0),
+                        "completion_tokens": 0,
+                        "total_tokens": int(overflow.get("prompt_tokens") or 0),
+                        "cost_usd": 0.0,
+                        "latency_ms": 0,
+                        "scope": "chat",
+                        "error": True,
+                        "context_limit": int(overflow.get("context_limit") or 0),
+                    }
+                events.put(("error", payload))
             finally:
                 agent.planner.on_step = None
                 events.put(("end", {}))
@@ -258,9 +345,11 @@ def chat_stream():
 def restore_session():
     """Восстанавливает состояние агента из БД по session_id cookie."""
     session_id = request.cookies.get("session_id")
+    if not session_id or not session_exists(session_id):
+        session_id = get_latest_session_id()
     _log_http_request("/session/restore", {"session_id": session_id})
 
-    if not session_id or not session_exists(session_id):
+    if not session_id:
         payload = {"found": False}
         _log_http_response("/session/restore", 200, payload)
         return jsonify(payload)
@@ -319,7 +408,14 @@ def restore_session():
         "filename": data.get("filename"),
         "has_csv": bool(data.get("csv_summary")),
         "df_available": df_available,
+        "planning_enabled": bool(getattr(agent, "ENABLE_PLANNING_ROUTER", False)),
         "messages": data.get("messages", []),
+        "token_stats_session": {
+            "total_tokens_in": int(data.get("total_tokens_in", 0) or 0),
+            "total_tokens_out": int(data.get("total_tokens_out", 0) or 0),
+            "total_cost_usd": float(data.get("total_cost_usd", 0.0) or 0.0),
+            "cost_history": data.get("cost_history", []),
+        },
     }
     _log_http_response(
         "/session/restore",
@@ -332,7 +428,8 @@ def restore_session():
             "df_available": payload["df_available"],
         },
     )
-    return jsonify(payload)
+    response = jsonify(payload)
+    return _set_session_cookie(response, session_id)
 
 
 @app.route("/session/new", methods=["POST"])

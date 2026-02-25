@@ -37,7 +37,11 @@ def init_db() -> None:
                 filename    TEXT,
                 csv_summary TEXT,
                 schema_map  TEXT DEFAULT '{}',
-                csv_path    TEXT
+                csv_path    TEXT,
+                total_tokens_in  INTEGER DEFAULT 0,
+                total_tokens_out INTEGER DEFAULT 0,
+                total_cost_usd   REAL    DEFAULT 0.0,
+                cost_history     TEXT    DEFAULT '[]'
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -54,6 +58,7 @@ def init_db() -> None:
                 ON messages(session_id, created_at);
             """
         )
+        _ensure_sessions_columns(conn)
 
     cleaned = cleanup_old_sessions(30)
     logger.info("[STORAGE] БД инициализирована: %s | очищено_старых_сессий=%s", DB_PATH.resolve(), cleaned)
@@ -91,6 +96,23 @@ def session_exists(session_id: str) -> bool:
     return row is not None
 
 
+def get_latest_session_id() -> str | None:
+    """
+    Возвращает ID последней активной сессии.
+    Берётся сессия с максимальным updated_at.
+    """
+    with _get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM sessions
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return row["id"] if row else None
+
+
 def save_csv_meta(
     session_id: str,
     filename: str,
@@ -122,18 +144,101 @@ def save_message(
     role: str,
     content: str,
     is_planning: bool = False,
-    tokens_used: int = 0,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    cost_usd: float = 0.0,
+    tokens_used: int | None = None,
 ) -> None:
     """Сохраняет одно сообщение диалога."""
+    message_tokens = int(tokens_used) if tokens_used is not None else int(tokens_in) + int(tokens_out)
     with _get_conn() as conn:
         conn.execute(
             """
             INSERT INTO messages (session_id, role, content, is_planning, tokens_used)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (session_id, role, content, int(bool(is_planning)), int(tokens_used)),
+            (session_id, role, content, int(bool(is_planning)), message_tokens),
         )
-        conn.execute("UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (session_id,))
+        if role == "assistant":
+            current_cost_raw = conn.execute(
+                "SELECT total_cost_usd, cost_history FROM sessions WHERE id=?",
+                (session_id,),
+            ).fetchone()
+            if current_cost_raw:
+                try:
+                    cost_history = json.loads(current_cost_raw["cost_history"] or "[]")
+                except json.JSONDecodeError:
+                    cost_history = []
+                if not isinstance(cost_history, list):
+                    cost_history = []
+                cost_history.append(float(cost_usd))
+                conn.execute(
+                    """
+                    UPDATE sessions
+                    SET total_tokens_in = total_tokens_in + ?,
+                        total_tokens_out = total_tokens_out + ?,
+                        total_cost_usd = total_cost_usd + ?,
+                        cost_history = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id=?
+                    """,
+                    (
+                        int(tokens_in),
+                        int(tokens_out),
+                        float(cost_usd),
+                        json.dumps(cost_history, ensure_ascii=False),
+                        session_id,
+                    ),
+                )
+            else:
+                conn.execute("UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (session_id,))
+        else:
+            conn.execute("UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (session_id,))
+
+
+def add_usage(
+    session_id: str,
+    tokens_in: int,
+    tokens_out: int,
+    cost_usd: float = 0.0,
+) -> None:
+    """
+    Добавляет usage-токены/стоимость к агрегатам сессии без сохранения сообщения.
+    Используется для LLM-вызовов вне чата (например, при загрузке CSV).
+    """
+    with _get_conn() as conn:
+        current = conn.execute(
+            "SELECT cost_history FROM sessions WHERE id=?",
+            (session_id,),
+        ).fetchone()
+        cost_history = []
+        if current:
+            try:
+                cost_history = json.loads(current["cost_history"] or "[]")
+            except json.JSONDecodeError:
+                cost_history = []
+        if not isinstance(cost_history, list):
+            cost_history = []
+        if cost_usd > 0:
+            cost_history.append(float(cost_usd))
+        conn.execute(
+            """
+            UPDATE sessions
+            SET total_tokens_in = total_tokens_in + ?,
+                total_tokens_out = total_tokens_out + ?,
+                total_cost_usd = total_cost_usd + ?,
+                cost_history = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (
+                int(tokens_in),
+                int(tokens_out),
+                float(cost_usd),
+                json.dumps(cost_history, ensure_ascii=False),
+                session_id,
+            ),
+        )
 
 
 def load_session(session_id: str) -> dict | None:
@@ -148,25 +253,30 @@ def load_session(session_id: str) -> dict | None:
             SELECT role, content, is_planning, tokens_used, created_at
             FROM messages
             WHERE session_id=?
-            ORDER BY id
+            ORDER BY id DESC
             LIMIT ?
             """,
             (session_id, MAX_RESTORE_MESSAGES),
         ).fetchall()
 
+    ordered_msgs = list(reversed(msgs))
     return {
         "session_id": row["id"],
         "filename": row["filename"],
         "csv_summary": row["csv_summary"],
         "schema_map": json.loads(row["schema_map"] or "{}"),
         "csv_path": row["csv_path"],
+        "total_tokens_in": int(row["total_tokens_in"] or 0),
+        "total_tokens_out": int(row["total_tokens_out"] or 0),
+        "total_cost_usd": float(row["total_cost_usd"] or 0.0),
+        "cost_history": json.loads(row["cost_history"] or "[]"),
         "messages": [
             {
                 "role": m["role"],
                 "content": m["content"],
                 "is_planning": bool(m["is_planning"]),
             }
-            for m in msgs
+            for m in ordered_msgs
         ],
     }
 
@@ -175,7 +285,18 @@ def clear_session_messages(session_id: str) -> None:
     """Очищает историю сообщений (метаданные CSV сохраняются)."""
     with _get_conn() as conn:
         conn.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
-        conn.execute("UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (session_id,))
+        conn.execute(
+            """
+            UPDATE sessions
+            SET total_tokens_in=0,
+                total_tokens_out=0,
+                total_cost_usd=0.0,
+                cost_history='[]',
+                updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (session_id,),
+        )
     logger.info("[STORAGE] История очищена: сессия=%s…", session_id[:8])
 
 
@@ -246,3 +367,18 @@ def cleanup_old_sessions(days: int = 30) -> int:
     if deleted:
         logger.info("[STORAGE] Очищено старых сессий: %s", deleted)
     return int(deleted)
+
+
+def _ensure_sessions_columns(conn: sqlite3.Connection) -> None:
+    """Добавляет недостающие столбцы в sessions для старых БД."""
+    rows = conn.execute("PRAGMA table_info(sessions)").fetchall()
+    existing = {row["name"] for row in rows}
+    migration = [
+        ("total_tokens_in", "INTEGER DEFAULT 0"),
+        ("total_tokens_out", "INTEGER DEFAULT 0"),
+        ("total_cost_usd", "REAL DEFAULT 0.0"),
+        ("cost_history", "TEXT DEFAULT '[]'"),
+    ]
+    for column_name, column_def in migration:
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {column_name} {column_def}")

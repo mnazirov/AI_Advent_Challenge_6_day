@@ -241,6 +241,173 @@ body::before {
   padding: 3px 9px; border-radius: 20px;
 }
 
+/* ── Token Panel (header) ── */
+.chat-header-left { margin-right: auto; }
+
+.token-panel {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 5px 12px;
+  font-family: var(--mono);
+  transition: border-color 0.2s, opacity 0.2s;
+}
+
+.token-panel:hover { border-color: var(--border2); }
+
+.tp-item {
+  display: flex; align-items: center; gap: 5px;
+  cursor: default;
+}
+
+.tp-icon {
+  width: 12px; height: 12px;
+  color: var(--muted); flex-shrink: 0;
+}
+
+.tp-value {
+  font-size: 0.72rem; font-weight: 600;
+  color: var(--muted2);
+  transition: color 0.3s ease;
+  min-width: 1ch;
+}
+
+.tp-value.flash {
+  color: var(--gold);
+  animation: tp-flash 0.6s ease;
+}
+
+@keyframes tp-flash {
+  0%   { color: var(--gold); }
+  100% { color: var(--muted2); }
+}
+
+.tp-label {
+  font-size: 0.62rem; color: var(--muted);
+}
+
+.tp-cost .tp-value { color: var(--green); }
+.tp-cost .tp-value.flash { color: var(--gold); }
+
+.tp-sep {
+  width: 1px; height: 14px;
+  background: var(--border2);
+}
+
+.tp-spark-wrap {
+  display: flex; align-items: center;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.tp-spark-wrap:hover { opacity: 1; }
+
+.token-panel.empty { opacity: 0.35; pointer-events: none; }
+
+/* ── Debug toggle button ── */
+.debug-toggle {
+  width: 28px; height: 28px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.debug-toggle svg { width: 13px; height: 13px; }
+
+.debug-toggle:hover {
+  border-color: rgba(232,201,109,0.35);
+  color: var(--gold-dim);
+  background: rgba(232,201,109,0.05);
+}
+
+.debug-toggle.active {
+  border-color: rgba(232,201,109,0.5);
+  color: var(--gold);
+  background: rgba(232,201,109,0.08);
+  box-shadow: 0 0 10px rgba(232,201,109,0.15);
+}
+
+/* ── Debug visibility ── */
+.debug-only { display: none !important; }
+.debug-only-block { display: none !important; }
+
+body.debug-mode .debug-only { display: flex !important; }
+body.debug-mode .debug-only-block { display: block !important; }
+
+/* ── Context Bar ── */
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 28px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(19,21,26,0.6);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  color: var(--muted);
+}
+
+.ctx-label {
+  font-size: 0.58rem; font-weight: 600;
+  letter-spacing: 0.1em; color: var(--muted);
+  flex-shrink: 0;
+}
+
+.ctx-track {
+  flex: 1; height: 4px;
+  background: var(--border);
+  border-radius: 4px;
+  position: relative;
+  overflow: visible;
+  max-width: 320px;
+}
+
+.ctx-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, #4cc98a, #e8c96d);
+  transition: width 0.5s ease, background 0.4s ease;
+  width: 0%;
+}
+
+.ctx-fill.warn { background: linear-gradient(90deg, #e8c96d, #f0a030); }
+.ctx-fill.danger { background: linear-gradient(90deg, #f06e6e, #d04040); }
+
+.ctx-marker {
+  position: absolute; top: -3px;
+  width: 1px; height: 10px;
+  border-radius: 1px;
+}
+
+.ctx-marker.warn { background: rgba(232,201,109,0.5); }
+.ctx-marker.danger { background: rgba(240,110,110,0.5); }
+
+.ctx-pct {
+  font-size: 0.7rem; font-weight: 600;
+  color: var(--muted2); min-width: 3ch;
+  transition: color 0.3s ease;
+}
+
+.ctx-pct.warn { color: var(--gold); }
+.ctx-pct.danger { color: var(--red); }
+
+.ctx-detail { color: var(--muted); font-size: 0.62rem; }
+
+.ctx-warn-badge {
+  font-size: 0.62rem; padding: 1px 7px;
+  border-radius: 10px; font-weight: 600;
+  opacity: 0; transition: opacity 0.3s;
+}
+
+.ctx-warn-badge.visible { opacity: 1; }
+.ctx-warn-badge.warn { background: rgba(232,201,109,0.12); color: var(--gold); }
+.ctx-warn-badge.danger { background: rgba(240,110,110,0.1); color: var(--red); }
+
 /* Messages */
 .messages {
   flex: 1; overflow-y: auto;
@@ -377,6 +544,33 @@ body::before {
   border-radius: 2px;
 }
 
+/* ── Message token badge ── */
+.msg-token-badge {
+  display: none;
+  align-items: center; gap: 10px;
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono); font-size: 0.63rem;
+  color: var(--muted);
+  animation: fadeup 0.3s ease both;
+}
+
+body.debug-mode .msg-token-badge { display: flex !important; }
+
+.mtb-item {
+  display: flex; align-items: center; gap: 3px;
+}
+
+.mtb-arrow-up { color: var(--blue); }
+.mtb-arrow-down { color: var(--green); }
+.mtb-cost { color: var(--gold-dim); }
+.mtb-latency { color: var(--muted); margin-left: 4px; }
+
+.mtb-sep {
+  width: 1px; height: 10px;
+  background: var(--border2);
+}
+
 /* Typing */
 .typing-bubble { display: flex; gap: 5px; align-items: center; padding: 14px 18px; }
 
@@ -427,12 +621,32 @@ textarea::placeholder { color: var(--muted); }
 .send-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; box-shadow: none; }
 .send-btn svg { width: 15px; height: 15px; fill: #1a1200; }
 
-.input-hint { margin-top: 8px; font-size: 0.66rem; color: var(--muted); text-align: center; }
-.input-hint kbd {
+/* ── Input footer ── */
+.input-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 8px;
+}
+
+.input-hint-text {
+  font-size: 0.66rem; color: var(--muted);
+}
+
+.input-hint-text kbd {
   background: var(--s3); border: 1px solid var(--border2);
   border-radius: 4px; padding: 1px 5px;
   font-family: var(--mono); font-size: 0.63rem; color: var(--muted2);
 }
+
+.input-token-est {
+  font-family: var(--mono); font-size: 0.66rem;
+  color: var(--muted);
+  transition: color 0.2s;
+}
+
+.input-token-est.warn { color: var(--gold); }
+.input-token-est.danger { color: var(--red); }
+
+#inputTokCount { font-weight: 600; }
 
 /* ── PLANNING INDICATOR ── */
 .planning-card {
@@ -964,7 +1178,45 @@ textarea::placeholder { color: var(--muted); }
         <div class="header-avatar">💰</div>
         <span class="header-title">Финансовый консультант</span>
       </div>
-      <span class="header-model">gpt-5.2</span>
+      <div class="token-panel debug-only empty" id="tokenPanel">
+        <div class="tp-item" title="Токены за всю сессию">
+          <svg class="tp-icon" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M5.5 8h5M8 5.5v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <span class="tp-value" id="tp-tokens">0</span>
+          <span class="tp-label">tok</span>
+        </div>
+        <div class="tp-sep"></div>
+        <div class="tp-item tp-cost" title="Стоимость сессии">
+          <svg class="tp-icon" viewBox="0 0 16 16" fill="none">
+            <path d="M8 2v12M5 5.5h4.5a2 2 0 010 4H5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+          <span class="tp-value" id="tp-cost">$0.0000</span>
+        </div>
+        <div class="tp-sep"></div>
+        <div class="tp-spark-wrap" title="Рост стоимости по запросам">
+          <canvas id="tp-spark" width="52" height="20"></canvas>
+        </div>
+      </div>
+      <button class="debug-toggle" id="debugToggle" onclick="TokenTracker.toggleDebug()"
+              title="Режим разработчика: токены и стоимость">
+        <svg viewBox="0 0 16 16" fill="none">
+          <path d="M8 2.5a2.5 2.5 0 00-2.5 2.5v.5H4a1 1 0 000 2h.1A5 5 0 003 10.5V12a1 1 0 002 0v-1h6v1a1 1 0 002 0v-1.5A5 5 0 0011.9 7.5H12a1 1 0 000-2h-1.5V5A2.5 2.5 0 008 2.5z" fill="currentColor"/>
+        </svg>
+      </button>
+      <span class="header-model">gpt-3.5-turbo</span>
+    </div>
+    <div class="context-bar debug-only" id="contextBar">
+      <span class="ctx-label">КОНТЕКСТ</span>
+      <div class="ctx-track">
+        <div class="ctx-fill" id="ctxFill"></div>
+        <div class="ctx-marker warn" style="left: 70%" title="70% — предупреждение"></div>
+        <div class="ctx-marker danger" style="left: 90%" title="90% — критично"></div>
+      </div>
+      <span class="ctx-pct" id="ctxPct">0%</span>
+      <span class="ctx-detail" id="ctxDetail">of 128k</span>
+      <span class="ctx-warn-badge" id="ctxWarnBadge"></span>
     </div>
 
     <div class="messages" id="messages">
@@ -993,7 +1245,14 @@ textarea::placeholder { color: var(--muted); }
           <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
       </div>
-      <div class="input-hint"><kbd>Enter</kbd> отправить · <kbd>Shift+Enter</kbd> перенос строки</div>
+      <div class="input-footer">
+        <span class="input-hint-text">
+          <kbd>Enter</kbd> отправить · <kbd>Shift+Enter</kbd> перенос
+        </span>
+        <span class="input-token-est debug-only" id="inputTokenEst" title="Примерное количество токенов в вашем сообщении">
+          <span id="inputTokCount">0</span> tok
+        </span>
+      </div>
     </div>
 
   </main>
@@ -1060,11 +1319,13 @@ textarea::placeholder { color: var(--muted); }
 
   /* ── Session Management ── */
   let currentSessionId = null;
+  let planningEnabled = false;
 
   window.addEventListener('DOMContentLoaded', async () => {
     buildLoaderChart();
     setLoaderStep('connect', 'active');
     setTimeout(() => setLoaderStep('connect', 'done'), 160);
+    TokenTracker.init();
     await restoreSession();
   });
 
@@ -1082,6 +1343,7 @@ textarea::placeholder { color: var(--muted); }
       }
 
       currentSessionId = data.session_id || null;
+      planningEnabled = Boolean(data.planning_enabled);
       hideWelcome();
 
       const box = document.getElementById('messages');
@@ -1113,6 +1375,18 @@ textarea::placeholder { color: var(--muted); }
         } else {
           showBadge(data.filename, 'Загружен и проанализирован');
         }
+      }
+
+      if (data.token_stats_session) {
+        const sessionStats = data.token_stats_session;
+        TokenTracker.restore(
+          Number(sessionStats.total_tokens_in || 0),
+          Number(sessionStats.total_tokens_out || 0),
+          Number(sessionStats.total_cost_usd || 0),
+          Array.isArray(sessionStats.cost_history)
+            ? sessionStats.cost_history.map((v) => Number(v || 0))
+            : [],
+        );
       }
       setLoaderStep('data', 'done');
 
@@ -1148,6 +1422,9 @@ textarea::placeholder { color: var(--muted); }
         let t = `✅ Файл загружен — найдено ${a.rows} транзакций.\n\n`;
         t += `Готов к консультации — задавайте любые вопросы.`;
         addMsg('bot', t);
+        if (data.token_stats) {
+          TokenTracker.record(data.token_stats, null);
+        }
       } else {
         addMsg('bot', `⚠️ Не удалось обработать файл: ${data.error}`);
       }
@@ -1243,6 +1520,293 @@ textarea::placeholder { color: var(--muted); }
     { id: 'synthesize', label: 'Синтез плана',       icon: '✦' },
   ];
 
+  /* ══════════════════════════════════════════════════════════
+     TOKEN TRACKER
+  ══════════════════════════════════════════════════════════ */
+  const MODEL_CONTEXT = {
+    'gpt-5.2': 400_000,
+    'gpt-5.1': 400_000,
+    'gpt-5': 400_000,
+    'gpt-5-mini': 400_000,
+    'gpt-5-nano': 400_000,
+    'gpt-4o-mini': 128_000,
+    'gpt-4o': 128_000,
+    'gpt-4-turbo': 128_000,
+    'gpt-4': 8_192,
+    'gpt-3.5-turbo': 16_385,
+    'gpt-4.1': 1_047_576,
+    'gpt-4.1-mini': 1_047_576,
+    'gpt-4.1-nano': 1_000_000,
+    'o3': 200_000,
+    'o3-mini': 200_000,
+    'o1': 200_000,
+    'o1-mini': 128_000,
+  };
+  const CONTEXT_WARN_PCT = 70;
+  const CONTEXT_DANGER_PCT = 90;
+
+  const TokenTracker = (() => {
+    let _totalTokensIn = 0;
+    let _totalTokensOut = 0;
+    let _totalCost = 0;
+    let _requestCount = 0;
+    let _costHistory = [];
+    let _sparkCtx = null;
+    let _currentModel = 'gpt-4o-mini';
+
+    function init() {
+      const modelEl = document.querySelector('.header-model');
+      if (modelEl) setModel(modelEl.textContent.trim());
+
+      _sparkCtx = document.getElementById('tp-spark')?.getContext('2d') || null;
+      document.getElementById('tokenPanel')?.classList.add('empty');
+      updateContextBar(0);
+
+      if (localStorage.getItem('debugMode') === '1') {
+        document.body.classList.add('debug-mode');
+        document.getElementById('debugToggle')?.classList.add('active');
+      }
+
+      _startInputCounter();
+    }
+
+    function toggleDebug() {
+      const isOn = document.body.classList.toggle('debug-mode');
+      localStorage.setItem('debugMode', isOn ? '1' : '0');
+      document.getElementById('debugToggle')?.classList.toggle('active', isOn);
+    }
+
+    function record(stats, msgEl) {
+      const promptTokens = Number(stats?.prompt_tokens || 0);
+      const completionTokens = Number(stats?.completion_tokens || 0);
+      const costUsd = Number(stats?.cost_usd || 0);
+      const isError = Boolean(stats?.error);
+
+      if (isError) {
+        if ((stats?.scope || 'chat') === 'chat') {
+          updateContextBar(promptTokens);
+        }
+        return;
+      }
+
+      _totalTokensIn += promptTokens;
+      _totalTokensOut += completionTokens;
+      _totalCost += costUsd;
+      _requestCount += 1;
+      _costHistory.push(costUsd);
+
+      document.getElementById('tokenPanel')?.classList.remove('empty');
+
+      _updatePanel();
+      _drawSparkline();
+      if ((stats?.scope || 'chat') === 'chat') {
+        updateContextBar(promptTokens);
+      }
+
+      if (msgEl) _addBadge(msgEl, stats);
+    }
+
+    function restore(totalIn, totalOut, totalCost, costHistory = []) {
+      _totalTokensIn = Number(totalIn || 0);
+      _totalTokensOut = Number(totalOut || 0);
+      _totalCost = Number(totalCost || 0);
+      _costHistory = Array.isArray(costHistory) ? costHistory.map((v) => Number(v || 0)) : [];
+      _requestCount = _costHistory.length;
+
+      if (_requestCount > 0) {
+        document.getElementById('tokenPanel')?.classList.remove('empty');
+      }
+
+      _updatePanel();
+      _drawSparkline();
+    }
+
+    function setModel(modelName) {
+      if (!modelName) return;
+      _currentModel = modelName;
+      const maxCtx = MODEL_CONTEXT[_currentModel] || 128_000;
+      const detailEl = document.getElementById('ctxDetail');
+      if (detailEl) detailEl.textContent = `${_fmtTok(0)} / ${_fmtTok(maxCtx)}`;
+    }
+
+    function updateContextBar(promptTokens) {
+      const maxCtx = MODEL_CONTEXT[_currentModel] || 128_000;
+      const pct = (Number(promptTokens || 0) / maxCtx) * 100;
+      const pctForWidth = Math.min(Math.max(pct, 0), 100);
+
+      const fill = document.getElementById('ctxFill');
+      const pctEl = document.getElementById('ctxPct');
+      const badge = document.getElementById('ctxWarnBadge');
+      const detailEl = document.getElementById('ctxDetail');
+      if (!fill || !pctEl || !badge || !detailEl) return;
+
+      fill.style.width = `${pctForWidth.toFixed(1)}%`;
+      fill.classList.remove('warn', 'danger');
+      pctEl.classList.remove('warn', 'danger');
+      badge.classList.remove('visible', 'warn', 'danger');
+      badge.textContent = '';
+
+      if (pct >= CONTEXT_DANGER_PCT) {
+        fill.classList.add('danger');
+        pctEl.classList.add('danger');
+        badge.textContent = '⚠ Критично';
+        badge.classList.add('visible', 'danger');
+      } else if (pct >= CONTEXT_WARN_PCT) {
+        fill.classList.add('warn');
+        pctEl.classList.add('warn');
+        badge.textContent = '⚡ Много токенов';
+        badge.classList.add('visible', 'warn');
+      }
+
+      pctEl.textContent = `${Math.round(pct)}%`;
+      detailEl.textContent = `${_fmtTok(Number(promptTokens || 0))} / ${_fmtTok(maxCtx)}`;
+    }
+
+    function _updatePanel() {
+      const totalTok = _totalTokensIn + _totalTokensOut;
+
+      const tokEl = document.getElementById('tp-tokens');
+      if (tokEl) {
+        tokEl.textContent = _fmtTok(totalTok);
+        _flashEl(tokEl);
+      }
+
+      const costEl = document.getElementById('tp-cost');
+      if (costEl) {
+        costEl.textContent = _fmtCost(_totalCost);
+        _flashEl(costEl);
+      }
+    }
+
+    function _addBadge(msgEl, stats) {
+      const promptTokens = Number(stats?.prompt_tokens || 0);
+      const completionTokens = Number(stats?.completion_tokens || 0);
+      const costUsd = Number(stats?.cost_usd || 0);
+      const latencyMs = Number(stats?.latency_ms || 0);
+
+      const bubble = msgEl.querySelector('.bubble');
+      if (!bubble) return;
+
+      const badge = document.createElement('div');
+      badge.className = 'msg-token-badge';
+      badge.innerHTML = `
+        <div class="mtb-item">
+          <span class="mtb-arrow-up">↑</span>
+          <span>${_fmtTok(promptTokens)}</span>
+        </div>
+        <div class="mtb-sep"></div>
+        <div class="mtb-item">
+          <span class="mtb-arrow-down">↓</span>
+          <span>${_fmtTok(completionTokens)}</span>
+        </div>
+        <div class="mtb-sep"></div>
+        <div class="mtb-item mtb-cost">
+          <span>${_fmtCost(costUsd)}</span>
+        </div>
+        ${latencyMs ? `<div class="mtb-sep"></div><div class="mtb-item mtb-latency"><span>${(latencyMs / 1000).toFixed(1)}s</span></div>` : ''}
+      `;
+      bubble.appendChild(badge);
+    }
+
+    function _drawSparkline() {
+      if (!_sparkCtx) return;
+      const canvas = _sparkCtx.canvas;
+      const w = canvas.width;
+      const h = canvas.height;
+      const ctx = _sparkCtx;
+      ctx.clearRect(0, 0, w, h);
+
+      if (_costHistory.length < 2) return;
+
+      const data = _costHistory.slice(-12);
+      const max = Math.max(...data);
+      const min = 0;
+      const range = max - min || 1;
+
+      const pts = data.map((v, i) => ({
+        x: (i / (data.length - 1)) * w,
+        y: h - ((v - min) / range) * (h - 2) - 1,
+      }));
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, h);
+      pts.forEach((p) => ctx.lineTo(p.x, p.y));
+      ctx.lineTo(pts[pts.length - 1].x, h);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(232,201,109,0.25)');
+      grad.addColorStop(1, 'rgba(232,201,109,0)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      pts.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+      ctx.strokeStyle = 'rgba(232,201,109,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+
+      const last = pts[pts.length - 1];
+      ctx.beginPath();
+      ctx.arc(last.x, last.y, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#e8c96d';
+      ctx.fill();
+    }
+
+    function _startInputCounter() {
+      const ta = document.getElementById('userInput');
+      const counter = document.getElementById('inputTokCount');
+      const wrap = document.getElementById('inputTokenEst');
+      if (!ta || !counter) return;
+
+      ta.addEventListener('input', () => {
+        const est = Math.max(0, Math.round(ta.value.length / 3.5));
+        counter.textContent = _fmtTok(est);
+        if (!wrap) return;
+        wrap.classList.remove('warn', 'danger');
+        if (est > 3000) wrap.classList.add('danger');
+        else if (est > 1000) wrap.classList.add('warn');
+      });
+    }
+
+    function _fmtTok(n) {
+      const value = Number(n || 0);
+      if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
+      return String(Math.round(value));
+    }
+
+    function _fmtCost(usd) {
+      const value = Number(usd || 0);
+      if (value >= 0.01) return `$${value.toFixed(4)}`;
+      if (value >= 0.001) return `$${value.toFixed(5)}`;
+      return `$${value.toFixed(6)}`;
+    }
+
+    function _flashEl(el) {
+      el.classList.remove('flash');
+      void el.offsetWidth;
+      el.classList.add('flash');
+      el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
+    }
+
+    return { init, record, restore, toggleDebug, setModel, updateContextBar };
+  })();
+
+  function formatTokShort(n) {
+    const num = Number(n || 0);
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}k`;
+    return `${num}`;
+  }
+
+  function buildOverflowMessage(stats) {
+    if (!stats || !stats.error) return '';
+    const promptTokens = Number(stats.prompt_tokens || 0);
+    const limit = Number(stats.context_limit || 0);
+    if (!promptTokens || !limit) return '';
+    return `Контекст превышен: ${formatTokShort(promptTokens)} / ${formatTokShort(limit)}. Уменьшите историю или длину сообщений.`;
+  }
+
 
   async function parseApiResponse(res) {
     const contentType = res.headers.get('content-type') || '';
@@ -1269,6 +1833,47 @@ textarea::placeholder { color: var(--muted); }
     hideWelcome();
     addMsg('user', text);
     setBusy(true);
+
+    if (!planningEnabled) {
+      showTyping();
+      try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
+      let data = null;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      }
+      if (!res.ok) {
+        removeTyping();
+        if (data && data.token_stats) {
+          TokenTracker.record(data.token_stats, null);
+          const overflowMsg = buildOverflowMessage(data.token_stats);
+          if (overflowMsg) {
+            addMsg('bot', `⚠️ ${overflowMsg}`);
+            return;
+          }
+        }
+        throw new Error((data && data.error) || `HTTP ${res.status}`);
+      }
+      removeTyping();
+      const msgEl = addMsg('bot', (data && data.reply) || '⚠️ Пустой ответ');
+      if (data && data.token_stats) {
+        TokenTracker.record(data.token_stats, msgEl);
+      }
+      } catch (err) {
+        removeTyping();
+        console.error('[CHAT] request failed', err);
+        addMsg('bot', '⚠️ Ошибка соединения с сервером.');
+      } finally {
+        setBusy(false);
+        inp.focus();
+      }
+      return;
+    }
 
     const planningCardId = `planning-${Date.now()}`;
     const planningEl = createPlanningCard(planningCardId);
@@ -1311,9 +1916,20 @@ textarea::placeholder { color: var(--muted); }
             updatePlanningStep(planningCardId, payload);
           } else if (eventType === 'done') {
             removePlanningCard(planningCardId);
-            addMsg('bot', payload.text || '⚠️ Пустой ответ');
+            const msgEl = addMsg('bot', payload.text || '⚠️ Пустой ответ');
+            if (payload.token_stats) {
+              TokenTracker.record(payload.token_stats, msgEl);
+            }
           } else if (eventType === 'error') {
             removePlanningCard(planningCardId);
+            if (payload.token_stats) {
+              TokenTracker.record(payload.token_stats, null);
+              const overflowMsg = buildOverflowMessage(payload.token_stats);
+              if (overflowMsg) {
+                addMsg('bot', `⚠️ ${overflowMsg}`);
+                continue;
+              }
+            }
             addMsg('bot', `⚠️ ${payload.error || 'Ошибка'}`);
           }
         }
@@ -1427,6 +2043,7 @@ textarea::placeholder { color: var(--muted); }
       </div>`;
     box.appendChild(div);
     box.scrollTop = box.scrollHeight;
+    return div;
   }
 
   function showTyping() {

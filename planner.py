@@ -54,8 +54,23 @@ class FinancialPlanner:
     }
 
     COST_PER_1M = {
+        "gpt-5.2": {"input": 1.75, "output": 14.00},
+        "gpt-5.1": {"input": 1.25, "output": 10.00},
+        "gpt-5": {"input": 1.25, "output": 10.00},
+        "gpt-5-mini": {"input": 0.25, "output": 2.00},
+        "gpt-5-nano": {"input": 0.05, "output": 0.40},
         "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-        "gpt-4o": {"input": 5.00, "output": 15.00},
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+        "gpt-4.1": {"input": 2.00, "output": 8.00},
+        "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+        "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
+        "o3": {"input": 2.00, "output": 8.00},
+        "o3-mini": {"input": 1.10, "output": 4.40},
+        "o1": {"input": 15.00, "output": 60.00},
+        "o1-mini": {"input": 1.10, "output": 4.40},
+        "gpt-4-turbo": {"input": 10.00, "output": 30.00},
+        "gpt-4": {"input": 30.00, "output": 60.00},
+        "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
     }
 
     def __init__(self, client: OpenAI, model: str = "gpt-5.2"):
@@ -66,6 +81,7 @@ class FinancialPlanner:
         self._run_prompt_tokens = 0
         self._run_completion_tokens = 0
         self._run_total_cost = 0.0
+        self.last_run_token_stats: dict[str, Any] | None = None
 
     def run(self, user_message: str, df: pd.DataFrame, csv_summary: str) -> str | None:
         """Запускает planning-цикл. Возвращает None, если запрос не планировочный."""
@@ -73,6 +89,7 @@ class FinancialPlanner:
         self._run_prompt_tokens = 0
         self._run_completion_tokens = 0
         self._run_total_cost = 0.0
+        self.last_run_token_stats = None
         started_total = perf_counter()
 
         goal = self._detect_goal(user_message, csv_summary)
@@ -107,6 +124,13 @@ class FinancialPlanner:
 
         latency_total_ms = int((perf_counter() - started_total) * 1000)
         total_tokens = self._run_prompt_tokens + self._run_completion_tokens
+        self.last_run_token_stats = {
+            "prompt_tokens": int(self._run_prompt_tokens),
+            "completion_tokens": int(self._run_completion_tokens),
+            "total_tokens": int(total_tokens),
+            "cost_usd": float(round(self._run_total_cost, 6)),
+            "latency_ms": int(latency_total_ms),
+        }
         logger.info(
             "[PLANNER] Завершён | всего_вызовов=%s всего_токенов=%s общая_стоимость=$%.6f latency_ms=%s",
             self._run_calls,
@@ -161,7 +185,7 @@ Planning-запрос (needs_planning=true):
             raw, meta = self._call_llm(
                 scope="planner_goal",
                 prompt=prompt,
-                max_completion_tokens=150,
+                max_completion_tokens=None,
                 temperature=0,
             )
             data = self._parse_json(raw, fallback={})
@@ -237,7 +261,7 @@ Planning-запрос (needs_planning=true):
             raw, meta = self._call_llm(
                 scope="planner_decompose",
                 prompt=prompt,
-                max_completion_tokens=400,
+                max_completion_tokens=None,
                 temperature=0,
             )
             parsed = self._parse_json(raw, fallback=[])
@@ -622,7 +646,7 @@ Planning-запрос (needs_planning=true):
             raw, meta = self._call_llm(
                 scope="planner_replan",
                 prompt=prompt,
-                max_completion_tokens=300,
+                max_completion_tokens=None,
                 temperature=0,
             )
             parsed = self._parse_json(raw, fallback={})
@@ -734,7 +758,7 @@ PLANNING
             text, meta = self._call_llm(
                 scope="planner_synthesize",
                 prompt=prompt,
-                max_completion_tokens=1500,
+                max_completion_tokens=None,
                 temperature=0.4,
             )
             if not text.strip():
@@ -824,7 +848,7 @@ PLANNING
             raw, _ = self._call_llm(
                 scope="planner_verify",
                 prompt=prompt,
-                max_completion_tokens=1200,
+                max_completion_tokens=None,
                 temperature=0,
             )
             parsed = self._parse_json(raw, fallback={})
@@ -918,7 +942,7 @@ PLANNING
         self,
         scope: str,
         prompt: str,
-        max_completion_tokens: int,
+        max_completion_tokens: int | None,
         temperature: float,
     ) -> tuple[str, dict[str, Any]]:
         """Выполняет вызов LLM и возвращает текст + метрики."""
@@ -927,18 +951,19 @@ PLANNING
             scope=scope,
             model=self.model,
             messages=messages,
-            max_completion_tokens=max_completion_tokens,
             temperature=temperature,
         )
 
         started = perf_counter()
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_completion_tokens=max_completion_tokens,
-                temperature=temperature,
-            )
+            request_params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+            }
+            if max_completion_tokens is not None:
+                request_params["max_completion_tokens"] = max_completion_tokens
+            response = self.client.chat.completions.create(**request_params)
         except Exception as exc:
             self._log_openai_error(
                 scope=scope,
@@ -946,7 +971,6 @@ PLANNING
                 messages_count=len(messages),
                 error=exc,
                 extra={
-                    "max_completion_tokens": max_completion_tokens,
                     "temperature": temperature,
                 },
             )
@@ -1081,7 +1105,7 @@ PLANNING
         scope: str,
         model: str,
         messages: list[dict[str, str]],
-        max_completion_tokens: int,
+        max_completion_tokens: int | None,
         temperature: float,
         extra: dict[str, Any] | None = None,
     ) -> None:
@@ -1091,9 +1115,10 @@ PLANNING
             "model": model,
             "messages_count": len(messages),
             "messages": messages,
-            "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
         }
+        if max_completion_tokens is not None:
+            payload["max_completion_tokens"] = max_completion_tokens
         if extra:
             payload.update(extra)
         logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(payload))

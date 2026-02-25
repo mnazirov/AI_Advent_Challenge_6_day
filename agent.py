@@ -221,22 +221,40 @@ logger = logging.getLogger("agent")
 class FinancialAgent:
     """Финансовый агент: загрузка CSV, нормализация схемы и чат с LLM."""
 
-    MAX_HISTORY_MESSAGES = 20
+    MAX_HISTORY_MESSAGES = 200
+    ENABLE_PLANNING_ROUTER = False
     PLANNING_CONFIDENCE_THRESHOLD = 0.75
     COST_PER_1M = {
+        "gpt-5.2": {"input": 1.75, "output": 14.00},
+        "gpt-5.1": {"input": 1.25, "output": 10.00},
+        "gpt-5": {"input": 1.25, "output": 10.00},
+        "gpt-5-mini": {"input": 0.25, "output": 2.00},
+        "gpt-5-nano": {"input": 0.05, "output": 0.40},
         "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-        "gpt-4o": {"input": 5.00, "output": 15.00},
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+        "gpt-4.1": {"input": 2.00, "output": 8.00},
+        "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
+        "gpt-4.1-nano": {"input": 0.10, "output": 0.40},
+        "o3": {"input": 2.00, "output": 8.00},
+        "o3-mini": {"input": 1.10, "output": 4.40},
+        "o1": {"input": 15.00, "output": 60.00},
+        "o1-mini": {"input": 1.10, "output": 4.40},
+        "gpt-4-turbo": {"input": 10.00, "output": 30.00},
+        "gpt-4": {"input": 30.00, "output": 60.00},
+        "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
     }
 
     def __init__(self):
         """Инициализирует клиент OpenAI и состояние сессии."""
         self._load_env_if_needed()
         self.client = OpenAI()
-        self.model = "gpt-5.2"
+        self.model = "gpt-3.5-turbo"
         self.planner = FinancialPlanner(client=self.client, model=self.model)
         self.conversation_history: list[dict[str, str]] = []
         self.csv_summary: str | None = None
         self.df: pd.DataFrame | None = None
+        self.last_token_stats: dict[str, Any] | None = None
+        self.last_schema_token_stats: dict[str, Any] | None = None
         self._last_encoding: str | None = None
         logger.info("[INIT] FinancialAgent инициализирован model=%s", self.model)
 
@@ -247,6 +265,7 @@ class FinancialAgent:
         При restore_mode=True загружает DataFrame без сброса истории диалога.
         """
         try:
+            self.last_schema_token_stats = None
             text = self._decode(file_content)
             delimiter = self._detect_delimiter(text)
             logger.info("[CSV] Кодировка=%s разделитель='%s'", self._last_encoding, delimiter)
@@ -328,9 +347,8 @@ class FinancialAgent:
         3. Детали добавляются к сообщению пользователя
         4. Основной LLM-вызов с обогащённым контекстом
         """
-        # Делегируем planning-запросы только если это подтвердил отдельный LLM-роутер.
-        planning_decision = {"needs_planning": False, "confidence": 0.0, "reason": "df_not_loaded"}
-        if self.df is not None:
+        # Делегируем planning-запросы только если включён routing.
+        if self.ENABLE_PLANNING_ROUTER and self.df is not None:
             planning_decision = self._route_planning(user_message)
             use_planner = (
                 bool(planning_decision.get("needs_planning"))
@@ -351,12 +369,23 @@ class FinancialAgent:
                 )
                 if planning_result is not None:
                     planning_result = self._sanitize_reply_text(planning_result)
+                    planner_stats = getattr(self.planner, "last_run_token_stats", None) or {}
+                    self.last_token_stats = {
+                        "prompt_tokens": int(planner_stats.get("prompt_tokens", 0) or 0),
+                        "completion_tokens": int(planner_stats.get("completion_tokens", 0) or 0),
+                        "total_tokens": int(planner_stats.get("total_tokens", 0) or 0),
+                        "cost_usd": float(planner_stats.get("cost_usd", 0.0) or 0.0),
+                        "latency_ms": int(planner_stats.get("latency_ms", 0) or 0),
+                        "scope": "planner",
+                    }
                     self.conversation_history.append({"role": "user", "content": user_message})
                     self.conversation_history.append({"role": "assistant", "content": planning_result})
                     if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
                         self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES :]
                     logger.info("[CHAT] Ответ сформирован через Planning Agent")
                     return planning_result
+        elif not self.ENABLE_PLANNING_ROUTER:
+            logger.info("[CHAT][ROUTE] planning_router disabled")
 
         detail_block = ""
         route_decision = {"needs_data": False, "queries": []}
@@ -395,11 +424,15 @@ class FinancialAgent:
             "model": self.model,
             "messages_count": len(messages),
             "temperature": 0.7,
-            "max_completion_tokens": 1024,
             "enriched": enriched_flag,
             "messages": messages,
         }
         logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
+        logger.info(
+            "[CHAT][HISTORY] stored_messages=%s max=%s",
+            len(self.conversation_history),
+            self.MAX_HISTORY_MESSAGES,
+        )
         logger.info("[CHAT][REQ] model=%s messages_count=%s enriched=%s", self.model, len(messages), enriched_flag)
 
         started_at = perf_counter()
@@ -407,7 +440,6 @@ class FinancialAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                max_completion_tokens=1024,
                 temperature=0.7,
             )
         except Exception as exc:
@@ -416,7 +448,6 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": len(messages),
                 "temperature": 0.7,
-                "max_completion_tokens": 1024,
                 "enriched": enriched_flag,
                 "error": str(exc),
             }
@@ -453,6 +484,14 @@ class FinancialAgent:
             "assistant_message": assistant_message,
         }
         logger.info("[API][OpenAI][Ответ]\n%s", self._pretty_json(response_payload))
+        self.last_token_stats = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": float(round(cost_usd, 6)),
+            "latency_ms": latency_ms,
+            "scope": "chat",
+        }
 
         logger.info(
             "[CHAT] вход=%s выход=%s всего=%s стоимость=$%.6f model=%s messages=%s enriched=%s",
@@ -473,6 +512,8 @@ class FinancialAgent:
         self.conversation_history = []
         self.csv_summary = None
         self.df = None
+        self.last_token_stats = None
+        self.last_schema_token_stats = None
         self.planner.on_step = None
 
     def _route_planning(self, user_message: str) -> dict:
@@ -511,7 +552,6 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": len(messages),
                 "temperature": 0,
-                "max_completion_tokens": 120,
                 "messages": messages,
             }
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
@@ -520,7 +560,6 @@ class FinancialAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                max_completion_tokens=120,
                 temperature=0,
             )
             latency_ms = int((perf_counter() - started_at) * 1000)
@@ -576,7 +615,6 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "max_completion_tokens": 120,
                 "error": str(exc),
             }
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
@@ -657,7 +695,6 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": len(route_messages),
                 "temperature": 0,
-                "max_completion_tokens": 200,
                 "messages": route_messages,
             }
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
@@ -666,7 +703,6 @@ class FinancialAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=route_messages,
-                max_completion_tokens=200,
                 temperature=0,
             )
             latency_ms = int((perf_counter() - started_at) * 1000)
@@ -733,7 +769,6 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "max_completion_tokens": 200,
                 "error": str(exc),
             }
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
@@ -954,7 +989,6 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "max_completion_tokens": 300,
                 "messages": [{"role": "user", "content": prompt}],
             }
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
@@ -963,7 +997,6 @@ class FinancialAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=300,
                 temperature=0,
                 timeout=8,
             )
@@ -993,6 +1026,14 @@ class FinancialAgent:
                 "assistant_message": raw,
             }
             logger.info("[API][OpenAI][Ответ]\n%s", self._pretty_json(response_payload))
+            self.last_schema_token_stats = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cost_usd": float(round(cost_usd, 6)),
+                "latency_ms": latency_ms,
+                "scope": "schema",
+            }
 
             logger.info(
                 "[API][SCHEMA][REQ] model=%s messages_count=1 prompt_tokens=%s completion_tokens=%s total_tokens=%s cost_usd=%.6f",
@@ -1052,9 +1093,9 @@ class FinancialAgent:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "max_completion_tokens": 300,
                 "error": str(exc),
             }
+            self.last_schema_token_stats = None
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
             logger.warning("[SCHEMA][LLM] Ошибка: %s — переключаюсь на keyword-fallback", exc)
             return {}
@@ -1577,9 +1618,7 @@ class FinancialAgent:
 
     def _estimate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """Оценивает стоимость запроса к модели в USD."""
-        pricing = self.COST_PER_1M.get(self.model)
-        if not pricing:
-            return 0.0
+        pricing = self.COST_PER_1M.get(self.model, self.COST_PER_1M["gpt-4o-mini"])
         return (prompt_tokens / 1_000_000) * pricing["input"] + (completion_tokens / 1_000_000) * pricing["output"]
 
     def _fmt_num(self, value: Any) -> str:
