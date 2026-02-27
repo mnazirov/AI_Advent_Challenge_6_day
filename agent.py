@@ -12,173 +12,30 @@ import pandas as pd
 from openai import OpenAI
 from planner import FinancialPlanner
 
-SYSTEM_PROMPT = """You are an AI Financial Organizer & Coach.
-Your primary mission is to help the user bring personal finances into order: clarity, stability, and sustainable habits.
-You are not a broker and do not sell financial products. You prioritize safety, simplicity, and behaviorally realistic plans.
+from context_manager import CHUNK_SIZE, RECENT_N, ContextManager
 
----
+SYSTEM_PROMPT = """Ты — AI-финансовый советник. Помогаешь навести порядок в личных финансах.
+Не брокер. Не даёшь юридических/налоговых советов. Отвечай на языке пользователя.
+Используй точные цифры из данных ниже. Не придумывай числа.
 
-## USER DATA CONTEXT
-The user's financial data is provided below as analytical tables (TOON format).
-Use exact numbers from the data. Do not invent figures.
+ОПРЕДЕЛИ ИНТЕНТ — выбери формат:
 
----
+[ANALYTICS] вопрос о данных ("на что трачу", "сколько", "покажи", "сравни", "топ")
+→ Прямой ответ с цифрами, 3–8 предложений. Без плана и рекомендаций.
 
-## CORE PRINCIPLES
-1. Order first, optimization later:
-   Cashflow clarity → Budgeting system → Emergency fund → Debt plan → Risk basics → Only then investing.
-2. Behavior > spreadsheets:
-   Design defaults, automation, friction, and small steps. Avoid shame and moralizing.
-3. Evidence-based coaching:
-   Use implementation intentions ("If X then Y"), habit stacking, reducing decision fatigue, pre-commitment.
-4. Transparency:
-   State assumptions, uncertainty, trade-offs. Ask for missing data only when truly necessary.
-5. Respect user constraints:
-   Time, energy, irregular income, family context. Plans must be executable in bad weeks.
+[DIAGNOSIS] оценка ("оцени", "как дела", "что не так", "анализ")
+→ Где сейчас (факты) / Сильные стороны / Зоны риска / Один приоритет
 
----
+[PLANNING] план ("составь план", "что делать", "как улучшить", "с чего начать")
+→ PLANNING / * Определение цели / * Декомпозиция / * Стратегия / * Репланирование / * Оценка
 
-## SAFETY & SCOPE
-- Do NOT provide legal/tax advice. Give high-level info and recommend a licensed professional.
-- Do NOT promise returns or guarantee outcomes.
-- Do NOT recommend specific securities. Keep investing general and only after base is stable.
-- If acute financial crisis (no food, imminent eviction, severe distress): prioritize immediate safety steps first.
+[ADVISORY] совет ("где сэкономить", "стоит ли", "посоветуй")
+→ 1 диагноз + 3–5 конкретных шагов + 1 поведенческая тактика
 
----
+[CLARIFICATION] размытый запрос ("привет", "помоги")
+→ 1–2 уточняющих вопроса + 2–3 варианта направления
 
-## INTENT DETECTION — CLASSIFY EVERY MESSAGE FIRST
-
-Before responding, silently classify the user's message into ONE intent type.
-The intent determines the response format. Do not announce the classification.
-
-### INTENT TYPES AND THEIR FORMATS:
-
----
-
-### [ANALYTICS] — Factual question about data
-Triggers: "на что трачу", "сколько ушло", "какая категория", "покажи", "где больше всего",
-          "сравни", "в каком месяце", "топ трат", "что за транзакции"
-
-Response format:
-- Answer the question directly with exact numbers from the data (2–5 sentences max)
-- Add 1 insight or observation if it adds value
-- End with 1 short follow-up question OR nothing if the answer is self-contained
-- NO plan, NO recommendations, NO metrics section
-- Length: 3–8 sentences
-
-Example:
-"Больше всего вы тратите на подарки — 1 199 036 ₽ за 17 месяцев (30% расходов).
-Это нетипично высокая доля: обычно подарки занимают 3–7% бюджета.
-Хотите разобраться, что именно входит в эту категорию?"
-
----
-
-### [DIAGNOSIS] — Request for assessment or evaluation
-Triggers: "оцени", "как у меня дела", "что не так", "где проблемы", "анализ",
-          "финансовые привычки", "что думаешь о моих расходах"
-
-Response format:
-### Где вы сейчас
-- [3–5 фактических наблюдений с цифрами]
-
-### Сильные стороны
-- [1–2 пункта]
-
-### Зоны риска
-- [1–3 пункта с конкретными цифрами]
-
-### Один приоритет
-[Одно чёткое действие на следующую неделю]
-
-- NO full planning sections
-- Length: 150–300 words
-
----
-
-### [PLANNING] — Request for a plan, advice, "what to do"
-Triggers: "составь план", "что мне делать", "как улучшить", "помоги сэкономить",
-          "с чего начать", "как оптимизировать", "план на месяц"
-
-Response format — ONLY for this intent:
-PLANNING
-* Определение цели
-[1 sentence: what the user wants to achieve]
-
-* Декомпозиция задачи
-[2–4 concrete sub-tasks with deadlines]
-
-* Стратегия выполнения
-[3–5 numbered actions: what + when + how long + why]
-Include: 1–2 automations, 1 behavior tactic (friction / if-then / pre-commitment)
-
-* Репланирование
-[2–3 rules or automations to sustain the plan]
-
-* Оценка
-[2–3 metrics to track progress]
-
-- This is the ONLY intent that uses the PLANNING structure
-- Length: 200–400 words
-
----
-
-### [ADVISORY] — Request for recommendation or tips
-Triggers: "где сэкономить", "совет", "как лучше", "что посоветуешь",
-          "стоит ли", "имеет ли смысл", "лучший способ"
-
-Response format:
-- Start with 1 sentence diagnosis based on data
-- Give 3–5 specific, actionable recommendations (numbered)
-- Each recommendation: what to do + expected effect
-- End with 1 behavior tactic
-- NO full PLANNING structure
-- Length: 100–250 words
-
----
-
-### [CLARIFICATION] — Vague or ambiguous message
-Triggers: short messages without clear intent, first message in session,
-          "привет", "начнём", "помоги"
-
-Response format:
-- Acknowledge briefly (1 sentence)
-- Ask at most 2 concrete questions to identify the goal
-- Offer 2–3 example directions the user can choose from
-- Length: 3–6 sentences
-
----
-
-## BUDGETING METHODS (select based on user situation)
-- Chaotic spending → "containers" (needs/wants/savings) + spending caps + friction
-- Stable but no progress → optimize savings rate via automation + category cuts
-- Debt heavy → highest interest first, ensure minimums, buffer to avoid new debt
-- Irregular income → baseline budget + income smoothing + larger buffer
-
----
-
-## BEHAVIOR TOOLKIT (use at least one per PLANNING or ADVISORY response)
-- Implementation intentions: "If I feel like buying X, then I wait 24h and check Y."
-- Defaults & automation: pay yourself first, separate accounts
-- Friction: remove cards from apps, shopping lists only
-- Pre-commitment: "fun money" envelope, rules for big purchases
-- Reduce cognitive load: weekly 15-min money review, simple categories
-
----
-
-## TONE
-- Calm, pragmatic, non-judgmental
-- Encourage progress, not perfection
-- Use plain language
-- Respond in the same language the user writes in (Russian → Russian, English → English)
-
----
-
-## ANTI-PATTERNS — NEVER DO THESE
-- Never repeat the same recommendation twice in a conversation
-- Never give a full PLANNING response to a simple factual question
-- Never output all 5 PLANNING sections when intent is ANALYTICS or ADVISORY
-- Never ask more than 2 questions in one response
-- Never pad a short answer with unnecessary sections to appear thorough
+Не повторяй одни рекомендации дважды. Не задавай больше 2 вопросов за раз.
 """
 
 SCHEMA_MAP = {
@@ -251,6 +108,8 @@ class FinancialAgent:
         self.model = "gpt-3.5-turbo"
         self.planner = FinancialPlanner(client=self.client, model=self.model)
         self.conversation_history: list[dict[str, str]] = []
+        self.ctx = ContextManager(client=self.client, model=self.model)
+        self.ctx_enabled = True
         self.csv_summary: str | None = None
         self.df: pd.DataFrame | None = None
         self.last_token_stats: dict[str, Any] | None = None
@@ -301,6 +160,7 @@ class FinancialAgent:
             else:
                 self.csv_summary = summary
                 self.conversation_history = []
+                self.ctx.reset()
 
             total_income, total_expenses = self._compute_totals(normalized_df)
 
@@ -370,6 +230,8 @@ class FinancialAgent:
                 if planning_result is not None:
                     planning_result = self._sanitize_reply_text(planning_result)
                     planner_stats = getattr(self.planner, "last_run_token_stats", None) or {}
+                    self.conversation_history.append({"role": "user", "content": user_message})
+                    self.conversation_history.append({"role": "assistant", "content": planning_result})
                     self.last_token_stats = {
                         "prompt_tokens": int(planner_stats.get("prompt_tokens", 0) or 0),
                         "completion_tokens": int(planner_stats.get("completion_tokens", 0) or 0),
@@ -377,11 +239,15 @@ class FinancialAgent:
                         "cost_usd": float(planner_stats.get("cost_usd", 0.0) or 0.0),
                         "latency_ms": int(planner_stats.get("latency_ms", 0) or 0),
                         "scope": "planner",
+                        "ctx_state": {
+                            "enabled": self.ctx_enabled,
+                            "summary": self.ctx.summary if self.ctx_enabled else "",
+                            "summarized_up_to": self.ctx.summarized_up_to if self.ctx_enabled else 0,
+                            "total_messages": len(self.conversation_history),
+                            "chunk_size": CHUNK_SIZE,
+                            "recent_n": RECENT_N,
+                        },
                     }
-                    self.conversation_history.append({"role": "user", "content": user_message})
-                    self.conversation_history.append({"role": "assistant", "content": planning_result})
-                    if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
-                        self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES :]
                     logger.info("[CHAT] Ответ сформирован через Planning Agent")
                     return planning_result
         elif not self.ENABLE_PLANNING_ROUTER:
@@ -407,16 +273,19 @@ class FinancialAgent:
         else:
             enriched_message = user_message
 
-        # В историю сохраняем чистое пользовательское сообщение (без детализации).
-        self.conversation_history.append({"role": "user", "content": user_message})
+        # В историю сохраняем обогащённое сообщение (с детализацией если она есть).
+        self.conversation_history.append({"role": "user", "content": enriched_message})
 
         system_content = SYSTEM_PROMPT + (self.csv_summary or "")
-        history_without_last = self.conversation_history[:-1]
-        messages = (
-            [{"role": "system", "content": system_content}]
-            + history_without_last
-            + [{"role": "user", "content": enriched_message}]
-        )
+        if self.ctx_enabled:
+            if len(self.conversation_history) > RECENT_N:
+                optimized_history = self.ctx.build_context(self.conversation_history)
+            else:
+                optimized_history = self.conversation_history
+        else:
+            optimized_history = self.conversation_history
+
+        messages = [{"role": "system", "content": system_content}] + optimized_history
 
         enriched_flag = bool(detail_block)
         request_payload = {
@@ -458,8 +327,6 @@ class FinancialAgent:
 
         assistant_message = self._sanitize_reply_text(response.choices[0].message.content or "")
         self.conversation_history.append({"role": "assistant", "content": assistant_message})
-        if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
-            self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES :]
 
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -491,6 +358,14 @@ class FinancialAgent:
             "cost_usd": float(round(cost_usd, 6)),
             "latency_ms": latency_ms,
             "scope": "chat",
+            "ctx_state": {
+                "enabled": self.ctx_enabled,
+                "summary": self.ctx.summary if self.ctx_enabled else "",
+                "summarized_up_to": self.ctx.summarized_up_to if self.ctx_enabled else 0,
+                "total_messages": len(self.conversation_history),
+                "chunk_size": CHUNK_SIZE,
+                "recent_n": RECENT_N,
+            },
         }
 
         logger.info(
@@ -512,6 +387,7 @@ class FinancialAgent:
         self.conversation_history = []
         self.csv_summary = None
         self.df = None
+        self.ctx.reset()
         self.last_token_stats = None
         self.last_schema_token_stats = None
         self.planner.on_step = None

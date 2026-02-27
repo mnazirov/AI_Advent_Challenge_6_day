@@ -305,8 +305,154 @@ body::before {
 
 .token-panel.empty { opacity: 0.35; pointer-events: none; }
 
-/* ── Debug toggle button ── */
-.debug-toggle {
+/* ── Debug Drawer ── */
+.debug-drawer {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: var(--s1);
+  border-top: 1px solid rgba(232,201,109,0.2);
+  border-radius: 16px 16px 0 0;
+  z-index: 100;
+  transform: translateY(100%);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  max-height: 70vh; overflow-y: auto;
+  box-shadow: 0 -8px 40px rgba(0,0,0,0.4);
+}
+
+.debug-drawer.open {
+  transform: translateY(0);
+}
+
+.dd-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0;
+  background: var(--s1);
+  z-index: 1;
+}
+
+.dd-title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 0.78rem; font-weight: 600;
+  color: var(--gold);
+}
+
+.dd-close {
+  background: transparent; border: none;
+  color: var(--muted); cursor: pointer;
+  font-size: 0.8rem; padding: 2px 6px;
+  border-radius: 4px; transition: color 0.15s;
+}
+.dd-close:hover { color: var(--text); }
+
+.dd-body {
+  padding: 6px 0 16px;
+  display: flex; flex-direction: column;
+}
+
+/* ── Toggle Row ── */
+.dd-row {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: 11px 20px;
+  transition: background 0.12s;
+}
+.dd-row:hover { background: rgba(255,255,255,0.02); }
+
+.dd-row-info {
+  display: flex; flex-direction: column; gap: 2px;
+  flex: 1; padding-right: 16px;
+}
+
+.dd-row-label {
+  font-size: 0.78rem; font-weight: 500; color: var(--text);
+}
+
+.dd-row-desc {
+  font-size: 0.66rem; color: var(--muted);
+}
+
+/* ── Toggle Switch ── */
+.dd-toggle {
+  width: 36px; height: 20px;
+  background: var(--s3);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+
+.dd-toggle-knob {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.dd-toggle.on {
+  background: rgba(232,201,109,0.18);
+  border-color: rgba(232,201,109,0.45);
+}
+
+.dd-toggle.on .dd-toggle-knob {
+  transform: translateX(16px);
+  background: var(--gold);
+  box-shadow: 0 0 6px rgba(232,201,109,0.5);
+}
+
+/* ── Context Manager State Block ── */
+.dd-ctx-state {
+  margin: 4px 20px 8px;
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  display: none;
+  animation: slidedown 0.2s ease;
+}
+
+.dd-ctx-state.visible { display: block; }
+
+.dd-ctx-meta {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dd-ctx-chip {
+  font-family: var(--mono); font-size: 0.64rem;
+  background: var(--s3); border: 1px solid var(--border2);
+  border-radius: 6px; padding: 2px 8px;
+  color: var(--muted2);
+}
+
+.dd-ctx-chip.highlight { color: var(--gold); border-color: rgba(232,201,109,0.3); }
+
+.dd-ctx-summary-wrap { padding: 10px 12px; }
+
+.dd-ctx-summary-label {
+  font-size: 0.62rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin-bottom: 6px;
+}
+
+.dd-ctx-summary-text {
+  font-size: 0.72rem; color: var(--muted2);
+  line-height: 1.6; font-style: italic;
+  max-height: 100px; overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* ── Debug open button ── */
+.chat-header-right {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.debug-open-btn {
   width: 28px; height: 28px;
   background: transparent;
   border: 1px solid var(--border);
@@ -315,18 +461,13 @@ body::before {
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: all 0.15s ease;
-  flex-shrink: 0;
 }
-
-.debug-toggle svg { width: 13px; height: 13px; }
-
-.debug-toggle:hover {
+.debug-open-btn:hover {
   border-color: rgba(232,201,109,0.35);
   color: var(--gold-dim);
   background: rgba(232,201,109,0.05);
 }
-
-.debug-toggle.active {
+.debug-open-btn.active {
   border-color: rgba(232,201,109,0.5);
   color: var(--gold);
   background: rgba(232,201,109,0.08);
@@ -334,11 +475,31 @@ body::before {
 }
 
 /* ── Debug visibility ── */
-.debug-only { display: none !important; }
-.debug-only-block { display: none !important; }
+#tokenPanel,
+#contextBar,
+.msg-token-badge,
+.input-token-est {
+  display: none;
+}
 
-body.debug-mode .debug-only { display: flex !important; }
-body.debug-mode .debug-only-block { display: block !important; }
+#tokenPanel.visible-feature,
+#contextBar.visible-feature {
+  display: flex;
+}
+
+.msg-token-badge.visible-feature {
+  display: flex;
+}
+
+.input-token-est.visible-feature {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.hidden-feature {
+  display: none !important;
+}
 
 /* ── Context Bar ── */
 .context-bar {
@@ -555,7 +716,6 @@ body.debug-mode .debug-only-block { display: block !important; }
   animation: fadeup 0.3s ease both;
 }
 
-body.debug-mode .msg-token-badge { display: flex !important; }
 
 .mtb-item {
   display: flex; align-items: center; gap: 3px;
@@ -1178,7 +1338,7 @@ textarea::placeholder { color: var(--muted); }
         <div class="header-avatar">💰</div>
         <span class="header-title">Финансовый консультант</span>
       </div>
-      <div class="token-panel debug-only empty" id="tokenPanel">
+      <div class="token-panel empty" id="tokenPanel">
         <div class="tp-item" title="Токены за всю сессию">
           <svg class="tp-icon" viewBox="0 0 16 16" fill="none">
             <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
@@ -1199,15 +1359,17 @@ textarea::placeholder { color: var(--muted); }
           <canvas id="tp-spark" width="52" height="20"></canvas>
         </div>
       </div>
-      <button class="debug-toggle" id="debugToggle" onclick="TokenTracker.toggleDebug()"
-              title="Режим разработчика: токены и стоимость">
+      <div class="chat-header-right">
+        <button class="debug-open-btn" id="debugOpenBtn"
+                onclick="DebugMenu.toggle()" title="Debug панель">
         <svg viewBox="0 0 16 16" fill="none">
           <path d="M8 2.5a2.5 2.5 0 00-2.5 2.5v.5H4a1 1 0 000 2h.1A5 5 0 003 10.5V12a1 1 0 002 0v-1h6v1a1 1 0 002 0v-1.5A5 5 0 0011.9 7.5H12a1 1 0 000-2h-1.5V5A2.5 2.5 0 008 2.5z" fill="currentColor"/>
         </svg>
-      </button>
-      <span class="header-model">gpt-3.5-turbo</span>
+        </button>
+        <span class="header-model" id="headerModel">gpt-3.5-turbo</span>
+      </div>
     </div>
-    <div class="context-bar debug-only" id="contextBar">
+    <div class="context-bar" id="contextBar">
       <span class="ctx-label">КОНТЕКСТ</span>
       <div class="ctx-track">
         <div class="ctx-fill" id="ctxFill"></div>
@@ -1249,9 +1411,78 @@ textarea::placeholder { color: var(--muted); }
         <span class="input-hint-text">
           <kbd>Enter</kbd> отправить · <kbd>Shift+Enter</kbd> перенос
         </span>
-        <span class="input-token-est debug-only" id="inputTokenEst" title="Примерное количество токенов в вашем сообщении">
+        <span class="input-token-est" id="inputTokenEst" title="Примерное количество токенов в вашем сообщении">
           <span id="inputTokCount">0</span> tok
         </span>
+      </div>
+    </div>
+
+    <!-- ── Debug Drawer ── -->
+    <div class="debug-drawer" id="debugDrawer">
+      <div class="dd-header">
+        <span class="dd-title">
+          <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13">
+            <path d="M8 2.5a2.5 2.5 0 00-2.5 2.5v.5H4a1 1 0 000 2h.1A5 5 0 003 10.5V12a1 1 0 002 0v-1h6v1a1 1 0 002 0v-1.5A5 5 0 0011.9 7.5H12a1 1 0 000-2h-1.5V5A2.5 2.5 0 008 2.5z"/>
+          </svg>
+          Debug панель
+        </span>
+        <button class="dd-close" onclick="DebugMenu.toggle()">✕</button>
+      </div>
+
+      <div class="dd-body">
+
+        <!-- Переключатель: Токены и стоимость -->
+        <div class="dd-row">
+          <div class="dd-row-info">
+            <span class="dd-row-label">Токены и стоимость</span>
+            <span class="dd-row-desc">Бейджи на сообщениях, панель в шапке, sparkline</span>
+          </div>
+          <button class="dd-toggle" id="dbg-tokens"
+                  onclick="DebugMenu.toggle('tokens')" role="switch">
+            <span class="dd-toggle-knob"></span>
+          </button>
+        </div>
+
+        <!-- Переключатель: Заполненность контекста -->
+        <div class="dd-row">
+          <div class="dd-row-info">
+            <span class="dd-row-label">Заполненность контекстного окна</span>
+            <span class="dd-row-desc">Полоска под шапкой с % использования</span>
+          </div>
+          <button class="dd-toggle" id="dbg-context-bar"
+                  onclick="DebugMenu.toggle('context-bar')" role="switch">
+            <span class="dd-toggle-knob"></span>
+          </button>
+        </div>
+
+        <!-- Переключатель: Управление контекстом -->
+        <div class="dd-row">
+          <div class="dd-row-info">
+            <span class="dd-row-label">Управление контекстом (rolling summary)</span>
+            <span class="dd-row-desc">Сжимает старые сообщения в summary вместо удаления</span>
+          </div>
+          <button class="dd-toggle" id="dbg-ctx-mgr"
+                  onclick="DebugMenu.toggle('ctx-mgr')" role="switch">
+            <span class="dd-toggle-knob"></span>
+          </button>
+        </div>
+
+        <!-- Блок состояния Context Manager (показывается когда ON) -->
+        <div class="dd-ctx-state" id="ddCtxState">
+          <div class="dd-ctx-meta">
+            <span class="dd-ctx-chip" id="ddChunk">chunk: 10</span>
+            <span class="dd-ctx-chip" id="ddRecent">recent: 10</span>
+            <span class="dd-ctx-chip" id="ddSummarized">свёрнуто: 0</span>
+            <span class="dd-ctx-chip" id="ddTotalMsgs">всего: 0</span>
+          </div>
+          <div class="dd-ctx-summary-wrap">
+            <div class="dd-ctx-summary-label">Текущий summary</div>
+            <div class="dd-ctx-summary-text" id="ddSummaryText">
+              — summary пока не создан —
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -1325,6 +1556,7 @@ textarea::placeholder { color: var(--muted); }
     buildLoaderChart();
     setLoaderStep('connect', 'active');
     setTimeout(() => setLoaderStep('connect', 'done'), 160);
+    DebugMenu.init();
     TokenTracker.init();
     await restoreSession();
   });
@@ -1387,6 +1619,9 @@ textarea::placeholder { color: var(--muted); }
             ? sessionStats.cost_history.map((v) => Number(v || 0))
             : [],
         );
+      }
+      if (data.ctx_state) {
+        DebugMenu.updateCtxState(data.ctx_state);
       }
       setLoaderStep('data', 'done');
 
@@ -1521,6 +1756,163 @@ textarea::placeholder { color: var(--muted); }
   ];
 
   /* ══════════════════════════════════════════════════════════
+     DEBUG MENU
+     Управляет debug-drawer и всеми debug-переключателями.
+     Состояние хранится в localStorage.
+  ══════════════════════════════════════════════════════════ */
+
+  const DebugMenu = (() => {
+
+    // Ключи localStorage
+    const LS = {
+      DRAWER: 'dbg_drawer',    // открыта ли панель
+      TOKENS: 'dbg_tokens',    // токены и стоимость
+      CTX_BAR: 'dbg_ctx_bar',  // context window bar
+      CTX_MGR: 'dbg_ctx_mgr',  // rolling summary
+    };
+
+    let _drawerOpen = false;
+
+    // ── Публичный API ──
+
+    /**
+     * Главный метод.
+     * toggle()          → открыть/закрыть drawer
+     * toggle('tokens')  → переключить конкретную опцию
+     */
+    function toggle(feature) {
+      if (!feature) {
+        _toggleDrawer();
+      } else {
+        _toggleFeature(feature);
+      }
+    }
+
+    /** Инициализация — восстановить состояние из localStorage */
+    function init() {
+      // Восстанавливаем состояние переключателей
+      _applyFeature('tokens', _isOn(LS.TOKENS));
+      _applyFeature('context-bar', _isOn(LS.CTX_BAR));
+      _applyFeature('ctx-mgr', _isOn(LS.CTX_MGR));
+
+      // Восстанавливаем состояние drawer
+      if (_isOn(LS.DRAWER)) _toggleDrawer();
+
+      // Уведомляем бэкенд о текущем состоянии ctx-mgr при старте
+      _syncCtxMgrBackend(_isOn(LS.CTX_MGR));
+    }
+
+    /** Обновить блок состояния Context Manager в drawer */
+    function updateCtxState(data) {
+      // data: { summary, summarized_up_to, total_messages, chunk_size, recent_n }
+      const stateEl = document.getElementById('ddCtxState');
+      if (!stateEl || !stateEl.classList.contains('visible')) return;
+
+      const set = (id, text, highlight = false) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text;
+        el.classList.toggle('highlight', highlight);
+      };
+
+      set('ddChunk', `chunk: ${data.chunk_size ?? 10}`);
+      set('ddRecent', `recent: ${data.recent_n ?? 10}`);
+      set(
+        'ddSummarized',
+        `свёрнуто: ${data.summarized_up_to ?? 0}`,
+        (data.summarized_up_to ?? 0) > 0,
+      );
+      set('ddTotalMsgs', `всего: ${data.total_messages ?? 0}`);
+
+      const summaryEl = document.getElementById('ddSummaryText');
+      if (summaryEl) {
+        summaryEl.textContent = data.summary ? data.summary : '— summary пока не создан —';
+        summaryEl.style.fontStyle = data.summary ? 'normal' : 'italic';
+      }
+    }
+
+    function isOn(feature) {
+      const key = { tokens: LS.TOKENS, 'context-bar': LS.CTX_BAR, 'ctx-mgr': LS.CTX_MGR }[feature];
+      return key ? _isOn(key) : false;
+    }
+
+    // ── Приватные методы ──
+
+    function _toggleDrawer() {
+      _drawerOpen = !_drawerOpen;
+      document.getElementById('debugDrawer')?.classList.toggle('open', _drawerOpen);
+      document.getElementById('debugOpenBtn')?.classList.toggle('active', _drawerOpen);
+      localStorage.setItem(LS.DRAWER, _drawerOpen ? '1' : '0');
+    }
+
+    function _toggleFeature(feature) {
+      const lsKey = {
+        tokens: LS.TOKENS,
+        'context-bar': LS.CTX_BAR,
+        'ctx-mgr': LS.CTX_MGR,
+      }[feature];
+
+      if (!lsKey) return;
+
+      const newVal = !_isOn(lsKey);
+      localStorage.setItem(lsKey, newVal ? '1' : '0');
+      _applyFeature(feature, newVal);
+
+      // Если переключили ctx-mgr — уведомить бэкенд
+      if (feature === 'ctx-mgr') {
+        _syncCtxMgrBackend(newVal);
+      }
+    }
+
+    function _applyFeature(feature, isOn) {
+      // Обновить UI переключателя
+      const btn = document.getElementById(`dbg-${feature}`);
+      if (btn) btn.classList.toggle('on', isOn);
+
+      // Применить эффект
+      switch (feature) {
+        case 'tokens':
+          // Показать/скрыть TokenTracker UI
+          document.getElementById('tokenPanel')?.classList.toggle('visible-feature', isOn);
+          // Бейджи на сообщениях
+          document.querySelectorAll('.msg-token-badge')
+            .forEach(el => el.classList.toggle('visible-feature', isOn));
+          // Счётчик в поле ввода
+          document.querySelector('.input-token-est')?.classList.toggle('visible-feature', isOn);
+          break;
+
+        case 'context-bar':
+          document.getElementById('contextBar')?.classList.toggle('visible-feature', isOn);
+          break;
+
+        case 'ctx-mgr':
+          // Показать/скрыть блок состояния в drawer
+          document.getElementById('ddCtxState')?.classList.toggle('visible', isOn);
+          break;
+      }
+    }
+
+    async function _syncCtxMgrBackend(enabled) {
+      // Сообщаем бэкенду включить или отключить ContextManager
+      try {
+        await fetch('/debug/ctx-mgr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+      } catch (e) {
+        console.warn('[DebugMenu] Не удалось синхронизировать ctx-mgr с бэкендом:', e);
+      }
+    }
+
+    function _isOn(lsKey) {
+      return localStorage.getItem(lsKey) === '1';
+    }
+
+    return { toggle, init, updateCtxState, isOn };
+  })();
+
+  /* ══════════════════════════════════════════════════════════
      TOKEN TRACKER
   ══════════════════════════════════════════════════════════ */
   const MODEL_CONTEXT = {
@@ -1562,18 +1954,7 @@ textarea::placeholder { color: var(--muted); }
       document.getElementById('tokenPanel')?.classList.add('empty');
       updateContextBar(0);
 
-      if (localStorage.getItem('debugMode') === '1') {
-        document.body.classList.add('debug-mode');
-        document.getElementById('debugToggle')?.classList.add('active');
-      }
-
       _startInputCounter();
-    }
-
-    function toggleDebug() {
-      const isOn = document.body.classList.toggle('debug-mode');
-      localStorage.setItem('debugMode', isOn ? '1' : '0');
-      document.getElementById('debugToggle')?.classList.toggle('active', isOn);
     }
 
     function record(stats, msgEl) {
@@ -1689,6 +2070,9 @@ textarea::placeholder { color: var(--muted); }
 
       const badge = document.createElement('div');
       badge.className = 'msg-token-badge';
+      if (DebugMenu.isOn('tokens')) {
+        badge.classList.add('visible-feature');
+      }
       badge.innerHTML = `
         <div class="mtb-item">
           <span class="mtb-arrow-up">↑</span>
@@ -1790,7 +2174,7 @@ textarea::placeholder { color: var(--muted); }
       el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
     }
 
-    return { init, record, restore, toggleDebug, setModel, updateContextBar };
+    return { init, record, restore, setModel, updateContextBar };
   })();
 
   function formatTokShort(n) {
@@ -1864,6 +2248,9 @@ textarea::placeholder { color: var(--muted); }
       if (data && data.token_stats) {
         TokenTracker.record(data.token_stats, msgEl);
       }
+      if (data && data.ctx_state) {
+        DebugMenu.updateCtxState(data.ctx_state);
+      }
       } catch (err) {
         removeTyping();
         console.error('[CHAT] request failed', err);
@@ -1919,6 +2306,9 @@ textarea::placeholder { color: var(--muted); }
             const msgEl = addMsg('bot', payload.text || '⚠️ Пустой ответ');
             if (payload.token_stats) {
               TokenTracker.record(payload.token_stats, msgEl);
+            }
+            if (payload.ctx_state) {
+              DebugMenu.updateCtxState(payload.ctx_state);
             }
           } else if (eventType === 'error') {
             removePlanningCard(planningCardId);

@@ -35,8 +35,10 @@ def init_db() -> None:
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 filename    TEXT,
-                csv_summary TEXT,
-                schema_map  TEXT DEFAULT '{}',
+                csv_summary         TEXT,
+                ctx_summary         TEXT    DEFAULT '',
+                ctx_summarized_upto INTEGER DEFAULT 0,
+                schema_map          TEXT DEFAULT '{}',
                 csv_path    TEXT,
                 total_tokens_in  INTEGER DEFAULT 0,
                 total_tokens_out INTEGER DEFAULT 0,
@@ -137,6 +139,28 @@ def save_csv_meta(
             ),
         )
     logger.info("[STORAGE] CSV-метаданные сохранены: сессия=%s… файл=%s", session_id[:8], filename)
+
+
+def save_context_summary(session_id: str, summary: str, summarized_up_to: int) -> None:
+    """
+    Сохраняет текущий summary контекста.
+    Вызывается в app.py после каждого chat-запроса если summary изменился.
+    """
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET ctx_summary = ?, ctx_summarized_upto = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (summary, int(summarized_up_to), session_id),
+        )
+    logger.info(
+        "[STORAGE] ctx_summary сохранён: сессия=%s… len=%s summarized_up_to=%s",
+        session_id[:8],
+        len(summary),
+        summarized_up_to,
+    )
 
 
 def save_message(
@@ -254,9 +278,8 @@ def load_session(session_id: str) -> dict | None:
             FROM messages
             WHERE session_id=?
             ORDER BY id DESC
-            LIMIT ?
             """,
-            (session_id, MAX_RESTORE_MESSAGES),
+            (session_id,),
         ).fetchall()
 
     ordered_msgs = list(reversed(msgs))
@@ -264,6 +287,8 @@ def load_session(session_id: str) -> dict | None:
         "session_id": row["id"],
         "filename": row["filename"],
         "csv_summary": row["csv_summary"],
+        "ctx_summary": row["ctx_summary"] or "",
+        "ctx_summarized_upto": int(row["ctx_summarized_upto"] or 0),
         "schema_map": json.loads(row["schema_map"] or "{}"),
         "csv_path": row["csv_path"],
         "total_tokens_in": int(row["total_tokens_in"] or 0),
@@ -292,6 +317,8 @@ def clear_session_messages(session_id: str) -> None:
                 total_tokens_out=0,
                 total_cost_usd=0.0,
                 cost_history='[]',
+                ctx_summary='',
+                ctx_summarized_upto=0,
                 updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
@@ -378,6 +405,8 @@ def _ensure_sessions_columns(conn: sqlite3.Connection) -> None:
         ("total_tokens_out", "INTEGER DEFAULT 0"),
         ("total_cost_usd", "REAL DEFAULT 0.0"),
         ("cost_history", "TEXT DEFAULT '[]'"),
+        ("ctx_summary", "TEXT DEFAULT ''"),
+        ("ctx_summarized_upto", "INTEGER DEFAULT 0"),
     ]
     for column_name, column_def in migration:
         if column_name not in existing:

@@ -8,6 +8,7 @@ import threading
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from agent import FinancialAgent
+from context_manager import CHUNK_SIZE, RECENT_N
 from storage import (
     add_usage,
     clear_session_csv,
@@ -17,6 +18,7 @@ from storage import (
     init_db,
     load_csv_file,
     load_session,
+    save_context_summary,
     save_csv_file,
     save_csv_meta,
     save_message,
@@ -84,6 +86,18 @@ def _extract_context_overflow(error_text: str) -> dict | None:
     return {
         "context_limit": int(max_match.group(1)) if max_match else 0,
         "prompt_tokens": int(used_match.group(1)) if used_match else 0,
+    }
+
+
+def _build_ctx_state() -> dict:
+    """Формирует состояние ContextManager для фронтенда."""
+    return {
+        "enabled": bool(getattr(agent, "ctx_enabled", True)),
+        "summary": agent.ctx.summary if getattr(agent, "ctx_enabled", True) else "",
+        "summarized_up_to": agent.ctx.summarized_up_to if getattr(agent, "ctx_enabled", True) else 0,
+        "total_messages": len(agent.conversation_history),
+        "chunk_size": CHUNK_SIZE,
+        "recent_n": RECENT_N,
     }
 
 
@@ -186,18 +200,26 @@ def chat():
 
     try:
         reply = agent.chat(message)
-        save_message(session_id, "user", message)
+        user_content = message
+        if len(agent.conversation_history) >= 2:
+            user_content = agent.conversation_history[-2].get("content", message)
+        save_message(session_id, "user", user_content)
         token_stats = agent.last_token_stats or {}
+        assistant_content = reply
+        if agent.conversation_history:
+            assistant_content = agent.conversation_history[-1].get("content", reply)
         save_message(
             session_id,
             "assistant",
-            reply,
+            assistant_content,
             tokens_in=int(token_stats.get("prompt_tokens", 0) or 0),
             tokens_out=int(token_stats.get("completion_tokens", 0) or 0),
             cost_usd=float(token_stats.get("cost_usd", 0.0) or 0.0),
         )
 
-        response_payload = {"reply": reply, "token_stats": token_stats}
+        save_context_summary(session_id, agent.ctx.summary, agent.ctx.summarized_up_to)
+
+        response_payload = {"reply": reply, "token_stats": token_stats, "ctx_state": _build_ctx_state()}
         response = jsonify(response_payload)
         _log_http_response(
             "/chat",
@@ -276,22 +298,41 @@ def chat_stream():
                 else:
                     is_planning = True
                     agent.last_token_stats = getattr(agent.planner, "last_run_token_stats", None) or {}
+                    agent.conversation_history.append({"role": "user", "content": message})
+                    agent.conversation_history.append({"role": "assistant", "content": result})
 
-                save_message(session_id, "user", message, is_planning=False)
+                user_content = message
+                if len(agent.conversation_history) >= 2:
+                    user_content = agent.conversation_history[-2].get("content", message)
+                save_message(session_id, "user", user_content, is_planning=False)
                 token_stats = agent.last_token_stats or {}
+                assistant_content = result
+                if agent.conversation_history:
+                    assistant_content = agent.conversation_history[-1].get("content", result)
                 save_message(
                     session_id,
                     "assistant",
-                    result,
+                    assistant_content,
                     is_planning=is_planning,
                     tokens_in=int(token_stats.get("prompt_tokens", 0) or 0),
                     tokens_out=int(token_stats.get("completion_tokens", 0) or 0),
                     cost_usd=float(token_stats.get("cost_usd", 0.0) or 0.0),
                 )
 
+                save_context_summary(session_id, agent.ctx.summary, agent.ctx.summarized_up_to)
+
                 stream_status["done"] = True
                 logger.info("[CHAT][SSE][DONE] reply_len=%s planning=%s", len(result), is_planning)
-                events.put(("done", {"text": result, "token_stats": token_stats}))
+                events.put(
+                    (
+                        "done",
+                        {
+                            "text": result,
+                            "token_stats": token_stats,
+                            "ctx_state": _build_ctx_state(),
+                        },
+                    )
+                )
             except Exception as exc:
                 logger.exception("[CHAT][SSE] Ошибка обработки: %s", exc)
                 err_text = str(exc)
@@ -341,6 +382,21 @@ def chat_stream():
     return _set_session_cookie(response, session_id)
 
 
+@app.route("/debug/ctx-mgr", methods=["POST"])
+def debug_ctx_mgr():
+    """
+    Включает или отключает ContextManager для текущей сессии.
+    Вызывается из DebugMenu при переключении тумблера.
+    """
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", True))
+
+    agent.ctx_enabled = enabled
+    logger.info("[DEBUG] ContextManager %s", "ВКЛЮЧЁН" if enabled else "ОТКЛЮЧЁН")
+
+    return jsonify({"success": True, "ctx_mgr_enabled": agent.ctx_enabled})
+
+
 @app.route("/session/restore", methods=["GET"])
 def restore_session():
     """Восстанавливает состояние агента из БД по session_id cookie."""
@@ -367,13 +423,16 @@ def restore_session():
         _log_http_response("/session/restore", 200, payload)
         return jsonify(payload)
 
-    agent.conversation_history = [
-        {"role": msg["role"], "content": msg["content"]}
-        for msg in data.get("messages", [])
-    ]
+    full_messages = data.get("messages", [])
+    agent.conversation_history = [{"role": msg["role"], "content": msg["content"]} for msg in full_messages]
 
     if data.get("csv_summary"):
         agent.csv_summary = data.get("csv_summary")
+
+    agent.ctx.restore(
+        summary=data.get("ctx_summary", ""),
+        summarized_up_to=int(data.get("ctx_summarized_upto", 0) or 0),
+    )
 
     df_available = False
     csv_path = data.get("csv_path")
@@ -398,9 +457,11 @@ def restore_session():
     logger.info(
         "[RESTORE] Сессия восстановлена: %s… сообщений=%s df_available=%s",
         session_id[:8],
-        len(data.get("messages", [])),
+        len(full_messages),
         df_available,
     )
+
+    ui_messages = full_messages
 
     payload = {
         "found": True,
@@ -409,13 +470,14 @@ def restore_session():
         "has_csv": bool(data.get("csv_summary")),
         "df_available": df_available,
         "planning_enabled": bool(getattr(agent, "ENABLE_PLANNING_ROUTER", False)),
-        "messages": data.get("messages", []),
+        "messages": ui_messages,
         "token_stats_session": {
             "total_tokens_in": int(data.get("total_tokens_in", 0) or 0),
             "total_tokens_out": int(data.get("total_tokens_out", 0) or 0),
             "total_cost_usd": float(data.get("total_cost_usd", 0.0) or 0.0),
             "cost_history": data.get("cost_history", []),
         },
+        "ctx_state": _build_ctx_state(),
     }
     _log_http_response(
         "/session/restore",
