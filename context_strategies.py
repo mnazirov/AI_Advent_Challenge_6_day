@@ -288,7 +288,6 @@ class BranchingStrategy:
     """
 
     name = "branching"
-    WINDOW_SIZE = 10
 
     def __init__(self):
         self.branches: dict[str, list[dict]] = {"main": []}
@@ -302,11 +301,11 @@ class BranchingStrategy:
         """
         Возвращает сообщения текущей активной ветки.
         history игнорируется — у каждой ветки своя история.
-        Последние WINDOW_SIZE сообщений активной ветки.
+        Возвращает ПОЛНУЮ историю активной ветки без обрезания.
         """
         del history
         branch = self.branches.get(self.active_branch, [])
-        return branch[-self.WINDOW_SIZE :]
+        return list(branch)
 
     def reset(self) -> None:
         self.branches = {"main": []}
@@ -428,7 +427,7 @@ class BranchingStrategy:
             "active_branch": self.active_branch,
             "branches": self.list_branches(),
             "checkpoints": list(self.checkpoints.keys()),
-            "in_context": len(active_msgs[-self.WINDOW_SIZE :]),
+            "in_context": len(active_msgs),
             "total_messages": len(active_msgs),
         }
 
