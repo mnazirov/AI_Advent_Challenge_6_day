@@ -404,18 +404,67 @@ body::before {
   box-shadow: 0 0 6px rgba(232,201,109,0.5);
 }
 
-/* ── Context Manager State Block ── */
+/* ── Strategy selector ── */
+.dd-section-head {
+  padding: 12px 20px 6px;
+  font-size: 0.61rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dd-strategy-wrap {
+  display: flex; flex-direction: column;
+  gap: 4px; padding: 0 12px 8px;
+}
+
+.dd-strategy-btn {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px;
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.14s ease;
+  text-align: left;
+}
+
+.dd-strategy-btn:hover {
+  border-color: var(--border2);
+  background: var(--s3);
+}
+
+.dd-strategy-btn.active {
+  border-color: rgba(232,201,109,0.45);
+  background: rgba(232,201,109,0.06);
+  box-shadow: 0 0 12px rgba(232,201,109,0.08);
+}
+
+.dsb-icon {
+  font-size: 1rem; flex-shrink: 0;
+  width: 22px; text-align: center;
+}
+
+.dsb-info { display: flex; flex-direction: column; gap: 1px; }
+
+.dsb-name {
+  font-size: 0.76rem; font-weight: 600; color: var(--text);
+}
+
+.dd-strategy-btn.active .dsb-name { color: var(--gold); }
+
+.dsb-desc {
+  font-size: 0.64rem; color: var(--muted);
+}
+
+/* ── Context state panel ── */
 .dd-ctx-state {
   margin: 4px 20px 8px;
   background: var(--s2);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
-  display: none;
   animation: slidedown 0.2s ease;
 }
-
-.dd-ctx-state.visible { display: block; }
 
 .dd-ctx-meta {
   display: flex; gap: 6px; flex-wrap: wrap;
@@ -432,6 +481,105 @@ body::before {
 
 .dd-ctx-chip.highlight { color: var(--gold); border-color: rgba(232,201,109,0.3); }
 
+.dd-ctx-panel { padding: 8px 12px 10px; }
+
+.dd-ctx-row {
+  display: flex; justify-content: space-between;
+  font-size: 0.7rem; padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.dd-ctx-row:last-child { border-bottom: none; }
+
+.dd-ctx-label { color: var(--muted); }
+.dd-ctx-val   { font-family: var(--mono); color: var(--muted2); }
+
+/* ── Facts list (Sticky Facts) ── */
+.dd-facts-list {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 0;
+}
+
+.dd-fact-row {
+  font-size: 0.68rem; padding: 4px 6px;
+  background: var(--s3); border-radius: 5px;
+  line-height: 1.4;
+}
+
+.dd-fact-key   { color: var(--gold-dim); font-weight: 600; }
+.dd-fact-val   { color: var(--muted2); }
+
+/* ── Branches (Branching) ── */
+.dd-branches-head,
+.dd-checkpoints-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px 4px;
+}
+
+.dd-micro-btn {
+  font-size: 0.64rem; font-family: var(--sans);
+  background: rgba(232,201,109,0.08);
+  border: 1px solid rgba(232,201,109,0.25);
+  border-radius: 5px; padding: 2px 8px;
+  color: var(--gold-dim); cursor: pointer;
+  transition: all 0.14s;
+}
+.dd-micro-btn:hover { background: rgba(232,201,109,0.14); color: var(--gold); }
+
+.dd-branch-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; font-size: 0.7rem;
+  cursor: pointer; transition: background 0.12s;
+  border-radius: 5px; margin: 0 6px;
+}
+.dd-branch-item:hover { background: var(--s3); }
+
+.dd-branch-item.active-branch {
+  background: rgba(232,201,109,0.06);
+}
+
+.dd-branch-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--muted); flex-shrink: 0;
+}
+.dd-branch-item.active-branch .dd-branch-dot {
+  background: var(--gold);
+  box-shadow: 0 0 6px var(--gold);
+}
+
+.dd-branch-name { color: var(--text); flex: 1; }
+.dd-branch-item.active-branch .dd-branch-name { color: var(--gold); }
+
+.dd-branch-count {
+  font-family: var(--mono); font-size: 0.62rem;
+  color: var(--muted);
+}
+
+.dd-branch-fork-btn {
+  font-size: 0.58rem; padding: 1px 6px;
+  background: transparent; border: 1px solid var(--border2);
+  border-radius: 4px; color: var(--muted);
+  cursor: pointer; transition: all 0.12s;
+  white-space: nowrap;
+}
+.dd-branch-fork-btn:hover { border-color: rgba(91,156,246,0.4); color: var(--blue); }
+
+.dd-checkpoint-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 12px; font-size: 0.68rem;
+  margin: 0 6px;
+}
+
+.dd-cp-name { color: var(--muted2); font-family: var(--mono); }
+
+.dd-cp-fork-btn {
+  font-size: 0.6rem; padding: 1px 7px;
+  background: transparent; border: 1px solid rgba(76,201,138,0.25);
+  border-radius: 4px; color: var(--green);
+  cursor: pointer; transition: all 0.12s;
+}
+.dd-cp-fork-btn:hover { background: rgba(76,201,138,0.07); }
+
 .dd-ctx-summary-wrap { padding: 10px 12px; }
 
 .dd-ctx-summary-label {
@@ -445,6 +593,16 @@ body::before {
   line-height: 1.6; font-style: italic;
   max-height: 100px; overflow-y: auto;
   scrollbar-width: thin;
+}
+
+/* Уведомление о смене ветки в чате */
+.branch-switch-notice {
+  text-align: center; padding: 4px 14px;
+  font-size: 0.67rem; color: var(--blue);
+  background: rgba(91,156,246,0.06);
+  border: 1px solid rgba(91,156,246,0.15);
+  border-radius: 14px; margin: 0 auto;
+  width: fit-content; animation: fadeup 0.3s ease;
 }
 
 /* ── Debug open button ── */
@@ -1455,32 +1613,131 @@ textarea::placeholder { color: var(--muted); }
           </button>
         </div>
 
-        <!-- Переключатель: Управление контекстом -->
-        <div class="dd-row">
-          <div class="dd-row-info">
-            <span class="dd-row-label">Управление контекстом (rolling summary)</span>
-            <span class="dd-row-desc">Сжимает старые сообщения в summary вместо удаления</span>
-          </div>
-          <button class="dd-toggle" id="dbg-ctx-mgr"
-                  onclick="DebugMenu.toggle('ctx-mgr')" role="switch">
-            <span class="dd-toggle-knob"></span>
+        <!-- Переключатель стратегии (вместо тумблера ctx-mgr) -->
+        <div class="dd-section-head">Стратегия управления контекстом</div>
+
+        <div class="dd-strategy-wrap" id="ddStrategyWrap">
+
+          <button class="dd-strategy-btn active" id="strat-sliding_window"
+                  onclick="DebugMenu.setStrategy('sliding_window')">
+            <span class="dsb-icon">⊟</span>
+            <div class="dsb-info">
+              <span class="dsb-name">Sliding Window</span>
+              <span class="dsb-desc">Последние N сообщений</span>
+            </div>
           </button>
+
+          <button class="dd-strategy-btn" id="strat-sticky_facts"
+                  onclick="DebugMenu.setStrategy('sticky_facts')">
+            <span class="dsb-icon">🧠</span>
+            <div class="dsb-info">
+              <span class="dsb-name">Sticky Facts</span>
+              <span class="dsb-desc">Факты + последние N</span>
+            </div>
+          </button>
+
+          <button class="dd-strategy-btn" id="strat-branching"
+                  onclick="DebugMenu.setStrategy('branching')">
+            <span class="dsb-icon">⑂</span>
+            <div class="dsb-info">
+              <span class="dsb-name">Branching</span>
+              <span class="dsb-desc">Ветки диалога</span>
+            </div>
+          </button>
+
+          <button class="dd-strategy-btn" id="strat-history_compression"
+                  onclick="DebugMenu.setStrategy('history_compression')">
+            <span class="dsb-icon">⊞</span>
+            <div class="dsb-info">
+              <span class="dsb-name">History Compression</span>
+              <span class="dsb-desc">Summary + последние N</span>
+            </div>
+          </button>
+
         </div>
 
-        <!-- Блок состояния Context Manager (показывается когда ON) -->
+        <!-- Панель состояния — меняется в зависимости от стратегии -->
         <div class="dd-ctx-state" id="ddCtxState">
-          <div class="dd-ctx-meta">
-            <span class="dd-ctx-chip" id="ddChunk">chunk: 10</span>
-            <span class="dd-ctx-chip" id="ddRecent">recent: 10</span>
-            <span class="dd-ctx-chip" id="ddSummarized">свёрнуто: 0</span>
-            <span class="dd-ctx-chip" id="ddTotalMsgs">всего: 0</span>
+
+          <!-- Общая шапка: токены в контексте -->
+          <div class="dd-ctx-meta" id="ddCtxMeta">
+            <span class="dd-ctx-chip" id="ddCtxIn">в контексте: 0</span>
+            <span class="dd-ctx-chip" id="ddCtxTotal">всего: 0</span>
+            <span class="dd-ctx-chip" id="ddCtxDropped"></span>
           </div>
-          <div class="dd-ctx-summary-wrap">
-            <div class="dd-ctx-summary-label">Текущий summary</div>
-            <div class="dd-ctx-summary-text" id="ddSummaryText">
-              — summary пока не создан —
+
+          <!-- SLIDING WINDOW специфика -->
+          <div class="dd-ctx-panel" id="panelSlidingWindow">
+            <div class="dd-ctx-row">
+              <span class="dd-ctx-label">Окно</span>
+              <span class="dd-ctx-val" id="swWindow">10 сообщений</span>
+            </div>
+            <div class="dd-ctx-row">
+              <span class="dd-ctx-label">Отброшено</span>
+              <span class="dd-ctx-val" id="swDropped">0</span>
             </div>
           </div>
+
+          <!-- STICKY FACTS специфика -->
+          <div class="dd-ctx-panel" id="panelStickyFacts" style="display:none">
+            <div class="dd-ctx-row">
+              <span class="dd-ctx-label">Фактов заполнено</span>
+              <span class="dd-ctx-val" id="sfFactsCount">0</span>
+            </div>
+            <div class="dd-facts-list" id="sfFactsList">
+              <!-- Генерируется JS -->
+            </div>
+          </div>
+
+          <!-- BRANCHING специфика -->
+          <div class="dd-ctx-panel" id="panelBranching" style="display:none">
+
+            <div class="dd-branches-head">
+              <span class="dd-ctx-label">Ветки</span>
+              <button class="dd-micro-btn" onclick="DebugMenu.createCheckpoint()">
+                + checkpoint
+              </button>
+            </div>
+
+            <div class="dd-branches-list" id="branchesList">
+              <!-- Генерируется JS -->
+            </div>
+
+            <div class="dd-checkpoints-head">
+              <span class="dd-ctx-label">Checkpoints</span>
+            </div>
+            <div class="dd-checkpoints-list" id="checkpointsList">
+              <!-- Генерируется JS -->
+            </div>
+
+          </div>
+
+          <!-- HISTORY COMPRESSION специфика -->
+          <div class="dd-ctx-panel" id="panelHistoryCompression" style="display:none">
+            <div class="dd-ctx-row">
+              <span class="dd-ctx-label">Свёрнуто сообщений</span>
+              <span class="dd-ctx-val" id="hcSummarized">0</span>
+            </div>
+            <div class="dd-ctx-row">
+              <span class="dd-ctx-label">Chunk size</span>
+              <span class="dd-ctx-val" id="hcChunkSize">10</span>
+            </div>
+            <div class="dd-ctx-row">
+              <span class="dd-ctx-label">Recent N</span>
+              <span class="dd-ctx-val" id="hcRecentN">10</span>
+            </div>
+            <div class="dd-ctx-row">
+              <span class="dd-ctx-label">Размер summary</span>
+              <span class="dd-ctx-val" id="hcSummaryLen">0 симв.</span>
+            </div>
+            <div class="dd-ctx-summary-wrap">
+              <div class="dd-ctx-summary-label">Текущий summary</div>
+              <div class="dd-ctx-summary-text" id="hcSummaryText">
+                — summary пока не создан —
+              </div>
+            </div>
+          </div>
+
         </div>
 
       </div>
@@ -1620,7 +1877,9 @@ textarea::placeholder { color: var(--muted); }
             : [],
         );
       }
-      if (data.ctx_state) {
+      if (data.ctx_stats) {
+        DebugMenu.updateCtxStats(data.ctx_stats);
+      } else if (data.ctx_state) {
         DebugMenu.updateCtxState(data.ctx_state);
       }
       setLoaderStep('data', 'done');
@@ -1768,7 +2027,7 @@ textarea::placeholder { color: var(--muted); }
       DRAWER: 'dbg_drawer',    // открыта ли панель
       TOKENS: 'dbg_tokens',    // токены и стоимость
       CTX_BAR: 'dbg_ctx_bar',  // context window bar
-      CTX_MGR: 'dbg_ctx_mgr',  // rolling summary
+      STRATEGY: 'dbg_ctx_strategy',
     };
 
     let _drawerOpen = false;
@@ -1793,47 +2052,259 @@ textarea::placeholder { color: var(--muted); }
       // Восстанавливаем состояние переключателей
       _applyFeature('tokens', _isOn(LS.TOKENS));
       _applyFeature('context-bar', _isOn(LS.CTX_BAR));
-      _applyFeature('ctx-mgr', _isOn(LS.CTX_MGR));
 
       // Восстанавливаем состояние drawer
       if (_isOn(LS.DRAWER)) _toggleDrawer();
 
-      // Уведомляем бэкенд о текущем состоянии ctx-mgr при старте
-      _syncCtxMgrBackend(_isOn(LS.CTX_MGR));
+      const storedStrategy = localStorage.getItem(LS.STRATEGY) || 'sliding_window';
+      _applyStrategyUI(storedStrategy);
+      _showStrategyPanel(storedStrategy);
     }
 
-    /** Обновить блок состояния Context Manager в drawer */
     function updateCtxState(data) {
-      // data: { summary, summarized_up_to, total_messages, chunk_size, recent_n }
-      const stateEl = document.getElementById('ddCtxState');
-      if (!stateEl || !stateEl.classList.contains('visible')) return;
-
-      const set = (id, text, highlight = false) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.textContent = text;
-        el.classList.toggle('highlight', highlight);
-      };
-
-      set('ddChunk', `chunk: ${data.chunk_size ?? 10}`);
-      set('ddRecent', `recent: ${data.recent_n ?? 10}`);
-      set(
-        'ddSummarized',
-        `свёрнуто: ${data.summarized_up_to ?? 0}`,
-        (data.summarized_up_to ?? 0) > 0,
-      );
-      set('ddTotalMsgs', `всего: ${data.total_messages ?? 0}`);
-
-      const summaryEl = document.getElementById('ddSummaryText');
-      if (summaryEl) {
-        summaryEl.textContent = data.summary ? data.summary : '— summary пока не создан —';
-        summaryEl.style.fontStyle = data.summary ? 'normal' : 'italic';
+      if (!data) return;
+      if (data.strategy && data.stats) {
+        _applyStrategyUI(data.strategy);
+        _showStrategyPanel(data.strategy);
+        updateCtxStats(data.stats);
+        return;
+      }
+      if (data.strategy && !data.stats) {
+        _applyStrategyUI(data.strategy);
+        _showStrategyPanel(data.strategy);
+        localStorage.setItem(LS.STRATEGY, data.strategy);
+      }
+      if (!data.strategy) {
+        updateCtxStats(data);
       }
     }
 
     function isOn(feature) {
-      const key = { tokens: LS.TOKENS, 'context-bar': LS.CTX_BAR, 'ctx-mgr': LS.CTX_MGR }[feature];
+      const key = { tokens: LS.TOKENS, 'context-bar': LS.CTX_BAR }[feature];
       return key ? _isOn(key) : false;
+    }
+
+    function setStrategy(name, silent = false) {
+      fetch('/debug/ctx-strategy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy: name }),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.success) { console.error('[Strategy]', data.error); return; }
+        _applyStrategyUI(name);
+        _showStrategyPanel(name);
+        localStorage.setItem(LS.STRATEGY, name);
+        if (data.stats) updateCtxStats(data.stats);
+        if (!silent) {
+          const box = document.getElementById('messages');
+          if (box) {
+            const notice = document.createElement('div');
+            notice.className = 'branch-switch-notice';
+            notice.textContent = `Стратегия: ${name}`;
+            box.appendChild(notice);
+            box.scrollTop = box.scrollHeight;
+          }
+        }
+      })
+      .catch(err => console.warn('[Strategy] Не удалось переключить стратегию:', err));
+    }
+
+    function _showStrategyPanel(name) {
+      const panels = {
+        sliding_window: 'panelSlidingWindow',
+        sticky_facts: 'panelStickyFacts',
+        branching: 'panelBranching',
+        history_compression: 'panelHistoryCompression',
+      };
+      Object.entries(panels).forEach(([strategy, panelId]) => {
+        const el = document.getElementById(panelId);
+        if (el) el.style.display = strategy === name ? 'block' : 'none';
+      });
+    }
+
+    function updateCtxStats(stats) {
+      if (!stats) return;
+
+      if (stats.strategy) {
+        _applyStrategyUI(stats.strategy);
+        _showStrategyPanel(stats.strategy);
+        localStorage.setItem(LS.STRATEGY, stats.strategy);
+      }
+
+      const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+      };
+
+      set('ddCtxIn', `в контексте: ${stats.in_context ?? 0}`);
+      set('ddCtxTotal', `всего: ${stats.total_messages ?? 0}`);
+
+      const droppedEl = document.getElementById('ddCtxDropped');
+      if (stats.strategy === 'sliding_window') {
+        set('swWindow', `${stats.window_size ?? 10} сообщений`);
+        set('swDropped', stats.dropped ?? 0);
+        if (droppedEl) {
+          droppedEl.textContent = stats.dropped > 0 ? `отброшено: ${stats.dropped}` : '';
+          droppedEl.classList.toggle('highlight', stats.dropped > 0);
+        }
+      } else if (droppedEl) {
+        droppedEl.textContent = '';
+        droppedEl.classList.remove('highlight');
+      }
+
+      if (stats.strategy === 'sticky_facts') {
+        set('sfFactsCount', stats.facts_populated ?? 0);
+        _renderFacts(stats.facts ?? {});
+      }
+
+      if (stats.strategy === 'branching') {
+        _renderBranches(stats.branches ?? [], stats.checkpoints ?? []);
+      }
+
+      if (stats.strategy === 'history_compression') {
+        set('hcSummarized', stats.summarized_up_to ?? 0);
+        set('hcChunkSize', stats.chunk_size ?? 10);
+        set('hcRecentN', stats.recent_n ?? 10);
+        set('hcSummaryLen', `${stats.summary_len ?? 0} симв.`);
+
+        const summaryEl = document.getElementById('hcSummaryText');
+        if (summaryEl) {
+          summaryEl.textContent = stats.summary || '— summary пока не создан —';
+          summaryEl.style.fontStyle = stats.summary ? 'normal' : 'italic';
+        }
+      }
+    }
+
+    function _renderFacts(facts) {
+      const list = document.getElementById('sfFactsList');
+      if (!list) return;
+      list.innerHTML = '';
+
+      const labels = {
+        goal: 'Цель',
+        constraints: 'Ограничения',
+        preferences: 'Предпочтения',
+        decisions: 'Решения',
+        agreements: 'Договорённости',
+        profile: 'Профиль',
+      };
+
+      for (const [key, label] of Object.entries(labels)) {
+        const val = facts[key];
+        if (!val || (Array.isArray(val) && val.length === 0)) continue;
+
+        const text = Array.isArray(val) ? val.join('; ') : val;
+        const row = document.createElement('div');
+        row.className = 'dd-fact-row';
+        row.innerHTML = `<span class="dd-fact-key">${label}:</span> `
+                      + `<span class="dd-fact-val">${esc(text)}</span>`;
+        list.appendChild(row);
+      }
+
+      if (!list.children.length) {
+        list.innerHTML = '<div class="dd-fact-row" style="color:var(--muted);font-style:italic">'
+                       + 'Факты пока не собраны</div>';
+      }
+    }
+
+    function _renderBranches(branches, checkpoints) {
+      const bList = document.getElementById('branchesList');
+      const cpList = document.getElementById('checkpointsList');
+      if (!bList || !cpList) return;
+
+      bList.innerHTML = '';
+      branches.forEach((b) => {
+        const item = document.createElement('div');
+        item.className = `dd-branch-item ${b.active ? 'active-branch' : ''}`;
+        item.innerHTML = `
+          <div class="dd-branch-dot"></div>
+          <span class="dd-branch-name">${esc(b.name)}</span>
+          <span class="dd-branch-count">${b.messages} сообщ.</span>
+          ${!b.active
+            ? `<button class="dd-branch-fork-btn"
+                       onclick="DebugMenu.switchBranch('${esc(b.name)}')">
+                 → переключить
+               </button>`
+            : '<span style="font-size:0.6rem;color:var(--gold)">active</span>'}
+        `;
+        bList.appendChild(item);
+      });
+
+      cpList.innerHTML = '';
+      checkpoints.forEach((name) => {
+        const item = document.createElement('div');
+        item.className = 'dd-checkpoint-item';
+        item.innerHTML = `
+          <span class="dd-cp-name">◉ ${esc(name)}</span>
+          <button class="dd-cp-fork-btn"
+                  onclick="DebugMenu.forkBranch('${esc(name)}')">
+            ⑂ fork
+          </button>
+        `;
+        cpList.appendChild(item);
+      });
+
+      if (!checkpoints.length) {
+        cpList.innerHTML = '<div style="padding:4px 12px;font-size:0.66rem;color:var(--muted)">'
+                         + 'Нет checkpoints</div>';
+      }
+    }
+
+    async function createCheckpoint() {
+      const name = `cp_${Date.now().toString(36)}`;
+      const res = await fetch('/ctx/checkpoint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.stats) updateCtxStats(data.stats);
+        const box = document.getElementById('messages');
+        const notice = document.createElement('div');
+        notice.className = 'branch-switch-notice';
+        notice.textContent = `◉ Checkpoint «${data.checkpoint.name}» сохранён`;
+        box.appendChild(notice);
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+
+    async function forkBranch(checkpointName) {
+      const res = await fetch('/ctx/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkpoint: checkpointName }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.stats) updateCtxStats(data.stats);
+        const box = document.getElementById('messages');
+        const notice = document.createElement('div');
+        notice.className = 'branch-switch-notice';
+        notice.textContent = `⑂ Создана ветка «${data.new_branch}» от ${checkpointName}`;
+        box.appendChild(notice);
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+
+    async function switchBranch(branchName) {
+      const res = await fetch('/ctx/switch-branch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch: branchName }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.stats) updateCtxStats(data.stats);
+        const box = document.getElementById('messages');
+        const notice = document.createElement('div');
+        notice.className = 'branch-switch-notice';
+        notice.textContent = `⇄ Переключились на ветку «${branchName}»`;
+        box.appendChild(notice);
+        box.scrollTop = box.scrollHeight;
+      }
     }
 
     // ── Приватные методы ──
@@ -1849,7 +2320,6 @@ textarea::placeholder { color: var(--muted); }
       const lsKey = {
         tokens: LS.TOKENS,
         'context-bar': LS.CTX_BAR,
-        'ctx-mgr': LS.CTX_MGR,
       }[feature];
 
       if (!lsKey) return;
@@ -1857,11 +2327,6 @@ textarea::placeholder { color: var(--muted); }
       const newVal = !_isOn(lsKey);
       localStorage.setItem(lsKey, newVal ? '1' : '0');
       _applyFeature(feature, newVal);
-
-      // Если переключили ctx-mgr — уведомить бэкенд
-      if (feature === 'ctx-mgr') {
-        _syncCtxMgrBackend(newVal);
-      }
     }
 
     function _applyFeature(feature, isOn) {
@@ -1884,32 +2349,31 @@ textarea::placeholder { color: var(--muted); }
         case 'context-bar':
           document.getElementById('contextBar')?.classList.toggle('visible-feature', isOn);
           break;
-
-        case 'ctx-mgr':
-          // Показать/скрыть блок состояния в drawer
-          document.getElementById('ddCtxState')?.classList.toggle('visible', isOn);
-          break;
       }
     }
 
-    async function _syncCtxMgrBackend(enabled) {
-      // Сообщаем бэкенду включить или отключить ContextManager
-      try {
-        await fetch('/debug/ctx-mgr', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled }),
-        });
-      } catch (e) {
-        console.warn('[DebugMenu] Не удалось синхронизировать ctx-mgr с бэкендом:', e);
-      }
+    function _applyStrategyUI(name) {
+      document.querySelectorAll('.dd-strategy-btn').forEach((btn) => {
+        btn.classList.remove('active');
+      });
+      document.getElementById(`strat-${name}`)?.classList.add('active');
     }
 
     function _isOn(lsKey) {
       return localStorage.getItem(lsKey) === '1';
     }
 
-    return { toggle, init, updateCtxState, isOn };
+    return {
+      toggle,
+      init,
+      updateCtxState,
+      updateCtxStats,
+      isOn,
+      setStrategy,
+      createCheckpoint,
+      forkBranch,
+      switchBranch,
+    };
   })();
 
   /* ══════════════════════════════════════════════════════════
@@ -2248,7 +2712,9 @@ textarea::placeholder { color: var(--muted); }
       if (data && data.token_stats) {
         TokenTracker.record(data.token_stats, msgEl);
       }
-      if (data && data.ctx_state) {
+      if (data && data.ctx_stats) {
+        DebugMenu.updateCtxStats(data.ctx_stats);
+      } else if (data && data.ctx_state) {
         DebugMenu.updateCtxState(data.ctx_state);
       }
       } catch (err) {
@@ -2307,7 +2773,9 @@ textarea::placeholder { color: var(--muted); }
             if (payload.token_stats) {
               TokenTracker.record(payload.token_stats, msgEl);
             }
-            if (payload.ctx_state) {
+            if (payload.ctx_stats) {
+              DebugMenu.updateCtxStats(payload.ctx_stats);
+            } else if (payload.ctx_state) {
               DebugMenu.updateCtxState(payload.ctx_state);
             }
           } else if (eventType === 'error') {

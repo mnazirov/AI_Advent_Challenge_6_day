@@ -145,40 +145,40 @@ class FinancialPlanner:
         self._emit("goal", "running", "Определяю цель запроса")
 
         csv_summary_short = (csv_summary or "")[:500]
-        prompt = f"""Ты — классификатор запросов финансового агента.
+        prompt = f"""You are a request classifier for a financial planning assistant.
 
-Запрос пользователя: \"{user_message}\"
+User request: "{user_message}"
 
-Доступный контекст данных (краткая сводка):
+Available data context (short summary):
 {csv_summary_short}
 
-Определи: требует ли этот запрос составления финансового плана?
+Decide whether this request requires a financial planning flow.
 
-Planning-запрос (needs_planning=true):
-- Пользователь просит составить план, стратегию, roadmap
-- Пользователь спрашивает \"что мне делать\" / \"с чего начать\"
-- Пользователь хочет оптимизировать / улучшить / исправить ситуацию
-- Пользователь просит совет с конкретными шагами
+Planning request (needs_planning=true):
+- User asks for a plan, strategy, or roadmap
+- User asks "what should I do" / "where do I start"
+- User wants to optimize/improve/fix the financial situation
+- User asks for advice with concrete action steps
 
-НЕ planning-запрос (needs_planning=false):
-- Фактический вопрос о данных (\"сколько потратил\", \"покажи категории\")
-- Аналитический вопрос (\"в каком месяце больше трат\")
-- Уточняющий вопрос (\"а что с подарками?\")
-- Приветствие или общий вопрос
+Non-planning request (needs_planning=false):
+- Factual data question ("how much did I spend", "show categories")
+- Analytics question ("which month has higher spending")
+- Clarifying follow-up
+- Greeting or generic question
 
-Если needs_planning=true, извлеки:
-- goal_text: цель в одном предложении
-- horizon: горизонт планирования (\"неделя\" / \"месяц\" / \"квартал\" / \"год\" / \"не указан\")
-- focus_area: основная область (\"расходы\" / \"доходы\" / \"сбережения\" / \"долги\" / \"общее\")
-- constraint: ограничение если есть (\"сократить на 20%\" / \"откладывать 10000 в месяц\" / null)
+If needs_planning=true, extract:
+- goal_text: one-sentence goal
+- horizon: planning horizon ("week" / "month" / "quarter" / "year" / "unspecified")
+- focus_area: primary area ("expenses" / "income" / "savings" / "debts" / "general")
+- constraint: constraint if present ("reduce by 20%" / "save 10000 monthly" / null)
 
-Ответь ТОЛЬКО валидным JSON:
+Return ONLY valid JSON:
 {{
-  \"needs_planning\": true/false,
-  \"goal_text\": \"...\",
-  \"horizon\": \"...\",
-  \"focus_area\": \"...\",
-  \"constraint\": \"... или null\"
+  "needs_planning": true/false,
+  "goal_text": "...",
+  "horizon": "...",
+  "focus_area": "...",
+  "constraint": "... or null"
 }}"""
 
         try:
@@ -220,36 +220,36 @@ Planning-запрос (needs_planning=true):
         self._emit("decompose", "running", "Декомпозиция задач")
 
         tools_list = "\n".join([f"- {k}: {v}" for k, v in self.AVAILABLE_TOOLS.items()])
-        prompt = f"""Ты — аналитический планировщик финансового агента.
+        prompt = f"""You are an analytical planner for a financial assistant.
 
-ЦЕЛЬ ПОЛЬЗОВАТЕЛЯ: {goal.get("goal_text", "")}
-ГОРИЗОНТ: {goal.get("horizon", "не указан")}
-ФОКУС: {goal.get("focus_area", "общее")}
-ОГРАНИЧЕНИЕ: {goal.get("constraint")}
+USER GOAL: {goal.get("goal_text", "")}
+HORIZON: {goal.get("horizon", "unspecified")}
+FOCUS: {goal.get("focus_area", "general")}
+CONSTRAINT: {goal.get("constraint")}
 
-СВОДКА ДАННЫХ:
+DATA SUMMARY:
 {csv_summary}
 
-ДОСТУПНЫЕ АНАЛИТИЧЕСКИЕ ИНСТРУМЕНТЫ:
+AVAILABLE ANALYTICAL TOOLS:
 {tools_list}
 
-Разбей цель на 2-5 подзадач. Каждая подзадача — это конкретный анализ данных
-который нужно провести чтобы составить обоснованный план.
+Break the goal into 2-5 subtasks. Each subtask must be a specific data analysis
+required to build a justified action plan.
 
-Правила:
-- Начинай с самых важных задач (высокий приоритет = выполняется первым)
-- Не дублируй задачи с похожим смыслом
-- Каждая задача должна добавлять новую информацию к плану
-- Максимум 5 задач
+Rules:
+- Start with most important tasks (high priority first)
+- Do not duplicate semantically similar tasks
+- Each task must add new information
+- Maximum 5 tasks
 
-Ответь ТОЛЬКО валидным JSON — массивом задач:
+Return ONLY valid JSON: an array of tasks
 [
   {{
     "id": 1,
-    "tool": "название_инструмента",
-    "description": "что именно нужно узнать и зачем",
+    "tool": "tool_name",
+    "description": "what to find and why",
     "params": {{
-      "category": "название категории или null",
+      "category": "category name or null",
       "top_n": 10,
       "sort_by": "amount_desc"
     }},
@@ -604,42 +604,42 @@ Planning-запрос (needs_planning=true):
             chunks.append(f"- {desc}: {res}")
         tasks_and_results = "\n".join(chunks)
 
-        prompt = f"""Ты — аналитик финансового агента. Проверяешь полноту данных перед составлением плана.
+        prompt = f"""You are a financial analysis reviewer checking data completeness before plan synthesis.
 
-ЦЕЛЬ ПОЛЬЗОВАТЕЛЯ: {goal.get("goal_text", "")}
+USER GOAL: {goal.get("goal_text", "")}
 
-ВЫПОЛНЕННЫЕ ЗАДАЧИ И ИХ РЕЗУЛЬТАТЫ:
+COMPLETED TASKS AND RESULTS:
 {tasks_and_results}
 
-ДОСТУПНЫЕ ИНСТРУМЕНТЫ:
+AVAILABLE TOOLS:
 {tools_list}
 
-Вопрос: достаточно ли этих данных чтобы составить конкретный, обоснованный план?
-Или есть критически важные пробелы которые нужно закрыть?
+Question: Is this data sufficient to produce a concrete, evidence-based plan?
+Or are there critical gaps that must be closed first?
 
-Критерии полноты:
-- Есть данные о доходах и расходах
-- Известны основные проблемные категории
-- Есть понимание динамики (улучшается / ухудшается)
-- Достаточно для 3-5 конкретных рекомендаций
+Completeness criteria:
+- Income and expense data are covered
+- Major problematic categories are identified
+- Dynamics/trend is clear (improving or worsening)
+- Enough evidence for 3-5 concrete recommendations
 
-Ответь ТОЛЬКО валидным JSON:
+Return ONLY valid JSON:
 {{
   "need_more": true/false,
-  "reason": "одно предложение почему",
+  "reason": "one-sentence reason",
   "extra_tasks": [
     {{
       "id": 6,
-      "tool": "название_инструмента",
-      "description": "что нужно узнать",
+      "tool": "tool_name",
+      "description": "what is still needed",
       "params": {{"top_n": 10}},
       "priority": "high"
     }}
   ]
 }}
 
-Если need_more=false, extra_tasks должен быть [].
-Максимум 2 задачи в extra_tasks.
+If need_more=false, extra_tasks must be [].
+Maximum 2 tasks in extra_tasks.
 """
 
         try:
@@ -715,43 +715,42 @@ Planning-запрос (needs_planning=true):
             )
         all_results_formatted = "\n".join(blocks)
 
-        prompt = f"""Ты — AI Financial Coach. Составь персональный финансовый план на основе реальных данных.
+        prompt = f"""You are an AI Financial Coach. Build a personalized financial plan based on real data.
 
-ЦЕЛЬ ПОЛЬЗОВАТЕЛЯ: {goal.get("goal_text", "")}
-ГОРИЗОНТ: {goal.get("horizon", "не указан")}
-ОГРАНИЧЕНИЕ: {goal.get("constraint")}
+USER GOAL: {goal.get("goal_text", "")}
+HORIZON: {goal.get("horizon", "unspecified")}
+CONSTRAINT: {goal.get("constraint")}
 
-АНАЛИТИЧЕСКИЕ ДАННЫЕ (результаты анализа):
+ANALYTICAL RESULTS:
 {all_results_formatted}
 
-ОБЩИЙ КОНТЕКСТ (сводка):
+GLOBAL CONTEXT (summary):
 {csv_summary}
 
-Составь план строго в формате ниже.
-Каждая рекомендация должна опираться на конкретные цифры из данных выше.
-Не давай общих советов — только то что следует из этих конкретных данных.
+Write the plan strictly in the structure below.
+Every recommendation must be grounded in concrete numbers from the data above.
+Avoid generic advice. Use only evidence from these specific results.
+Final answer must be in Russian only.
 
 PLANNING
-* Определение цели
-[1-2 предложения: что пользователь хочет достичь и почему это реалистично
- исходя из данных — укажи конкретные числа]
+* Goal Definition
+[1-2 sentences: what the user wants to achieve and why it is realistic based on data; include specific numbers]
 
-* Декомпозиция задачи
-[3-5 конкретных подзадач с дедлайнами и ответственными действиями.
- Каждая привязана к конкретной цифре из данных]
+* Task Decomposition
+[3-5 concrete subtasks with deadlines and clear actions; each linked to concrete figures]
 
-* Стратегия выполнения
-[Пронумерованный план: 3-7 действий.
- Для каждого: ЧТО + КОГДА + СКОЛЬКО ВРЕМЕНИ + ПОЧЕМУ + ожидаемый эффект в рублях.
- Включи 1-2 автоматизации и 1 поведенческую тактику (if-then / трение / предобязательство)]
+* Execution Strategy
+[Numbered plan with 3-7 actions.
+For each action include: WHAT + WHEN + TIME REQUIRED + WHY + expected financial impact in RUB.
+Include 1-2 automations and 1 behavioral tactic (if-then / friction / pre-commitment)]
 
-* Репланирование
-[2-3 правила: как скорректировать план если что-то пойдёт не так.
- Конкретные триггеры: "Если в следующем месяце расходы на X превысят Y ₽, то..."]
+* Replanning
+[2-3 rules for adaptation if execution deviates.
+Use concrete triggers like: "If next month's spending for X exceeds Y RUB, then ..."]
 
-* Оценка
-[2-4 измеримые метрики с конкретными целевыми значениями и сроками.
- Пример: "Расходы на подарки: с 9 015 ₽/мес до 5 000 ₽/мес к апрелю"]
+* Evaluation
+[2-4 measurable metrics with target values and dates.
+Example: "Gifts spending: from 9,015 RUB/month to 5,000 RUB/month by April"]
 """
 
         try:
@@ -815,33 +814,35 @@ PLANNING
 
         facts_text = self._pretty_json(analysis_facts)
         summary_short = (csv_summary or "")[:1200]
-        prompt = f"""Ты — верификатор финансового плана.
+        prompt = f"""You are a financial plan verifier.
 
-Проверь согласованность чисел и формулировок в плане с фактами из данных.
+Check consistency of numbers and claims in the plan against factual data.
 
-ЦЕЛЬ:
+GOAL:
 {goal.get("goal_text", "")}
 
-ПЛАН ДЛЯ ПРОВЕРКИ:
+PLAN TO VERIFY:
 {draft_text}
 
-ФАКТЫ ИЗ ДАННЫХ (источник истины):
+FACTS FROM DATA (source of truth):
 {facts_text}
 
-КРАТКИЙ КОНТЕКСТ:
+SHORT CONTEXT:
 {summary_short}
 
-Что проверить:
-1) Нет ли перепутывания "за период" и "в месяц".
-2) Нет ли чисел, противоречащих фактам.
-3) Не изменена ли суть рекомендаций без причины.
+Checks:
+1) Detect confusion between "for full period" and "per month".
+2) Detect numbers that conflict with facts.
+3) Detect unjustified changes in recommendation meaning.
 
-Верни ТОЛЬКО валидный JSON:
+Return ONLY valid JSON:
 {{
   "is_consistent": true/false,
   "issues": ["..."],
-  "fixed_text": "исправленный текст или null"
+  "fixed_text": "corrected text or null"
 }}
+
+If fixed_text is provided, it must be in Russian only.
 """
 
         try:

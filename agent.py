@@ -12,30 +12,34 @@ import pandas as pd
 from openai import OpenAI
 from planner import FinancialPlanner
 
-from context_manager import CHUNK_SIZE, RECENT_N, ContextManager
+from context_strategies import ContextStrategyManager
 
-SYSTEM_PROMPT = """Ты — AI-финансовый советник. Помогаешь навести порядок в личных финансах.
-Не брокер. Не даёшь юридических/налоговых советов. Отвечай на языке пользователя.
-Используй точные цифры из данных ниже. Не придумывай числа.
+SYSTEM_PROMPT = """You are an AI financial advisor focused on personal finance.
+You are not a broker and you do not provide legal or tax advice.
+Use exact numbers from the provided data. Do not invent figures.
+Final user-facing reply must be in Russian only.
+Never output the heading or label "PLANNING".
+Do not output any service tags or markers like [PLAN], [ANALYTICS], [DIAGNOSIS], [ADVISORY], [CLARIFICATION].
 
-ОПРЕДЕЛИ ИНТЕНТ — выбери формат:
+Internally detect the intent and choose an appropriate response style:
 
-[ANALYTICS] вопрос о данных ("на что трачу", "сколько", "покажи", "сравни", "топ")
-→ Прямой ответ с цифрами, 3–8 предложений. Без плана и рекомендаций.
+Analytics questions ("where do I spend", "how much", "show", "compare", "top"):
+Direct numeric answer, 3-8 sentences. No plan or generic recommendations.
 
-[DIAGNOSIS] оценка ("оцени", "как дела", "что не так", "анализ")
-→ Где сейчас (факты) / Сильные стороны / Зоны риска / Один приоритет
+Diagnosis requests ("assess", "how am I doing", "what is wrong", "analyze"):
+Current state (facts) / strengths / risk zones / one priority.
 
-[PLANNING] план ("составь план", "что делать", "как улучшить", "с чего начать")
-→ PLANNING / * Определение цели / * Декомпозиция / * Стратегия / * Репланирование / * Оценка
+Planning requests ("make a plan", "what should I do", "how to improve", "where to start"):
+Give a practical step-by-step action plan in plain text with short section labels in Russian.
+Do not use the word "PLANNING" or bracketed headings.
 
-[ADVISORY] совет ("где сэкономить", "стоит ли", "посоветуй")
-→ 1 диагноз + 3–5 конкретных шагов + 1 поведенческая тактика
+Advice requests ("where to save", "is it worth", "advise"):
+1 diagnosis + 3-5 concrete actions + 1 behavioral tactic.
 
-[CLARIFICATION] размытый запрос ("привет", "помоги")
-→ 1–2 уточняющих вопроса + 2–3 варианта направления
+Vague requests ("hello", "help"):
+1-2 clarifying questions + 2-3 direction options.
 
-Не повторяй одни рекомендации дважды. Не задавай больше 2 вопросов за раз.
+Do not repeat the same recommendation twice. Do not ask more than 2 questions at a time.
 """
 
 SCHEMA_MAP = {
@@ -108,8 +112,7 @@ class FinancialAgent:
         self.model = "gpt-3.5-turbo"
         self.planner = FinancialPlanner(client=self.client, model=self.model)
         self.conversation_history: list[dict[str, str]] = []
-        self.ctx = ContextManager(client=self.client, model=self.model)
-        self.ctx_enabled = True
+        self.ctx = ContextStrategyManager(client=self.client, model=self.model)
         self.csv_summary: str | None = None
         self.df: pd.DataFrame | None = None
         self.last_token_stats: dict[str, Any] | None = None
@@ -160,7 +163,7 @@ class FinancialAgent:
             else:
                 self.csv_summary = summary
                 self.conversation_history = []
-                self.ctx.reset()
+                self.ctx.reset_all()
 
             total_income, total_expenses = self._compute_totals(normalized_df)
 
@@ -207,6 +210,8 @@ class FinancialAgent:
         3. Детали добавляются к сообщению пользователя
         4. Основной LLM-вызов с обогащённым контекстом
         """
+        t_start = perf_counter()
+
         # Делегируем planning-запросы только если включён routing.
         if self.ENABLE_PLANNING_ROUTER and self.df is not None:
             planning_decision = self._route_planning(user_message)
@@ -229,9 +234,13 @@ class FinancialAgent:
                 )
                 if planning_result is not None:
                     planning_result = self._sanitize_reply_text(planning_result)
+                    if self.ctx.active == "branching":
+                        self.ctx.strategy.add_message("user", user_message)
+                        self.ctx.strategy.add_message("assistant", planning_result)
+                    else:
+                        self.conversation_history.append({"role": "user", "content": user_message})
+                        self.conversation_history.append({"role": "assistant", "content": planning_result})
                     planner_stats = getattr(self.planner, "last_run_token_stats", None) or {}
-                    self.conversation_history.append({"role": "user", "content": user_message})
-                    self.conversation_history.append({"role": "assistant", "content": planning_result})
                     self.last_token_stats = {
                         "prompt_tokens": int(planner_stats.get("prompt_tokens", 0) or 0),
                         "completion_tokens": int(planner_stats.get("completion_tokens", 0) or 0),
@@ -239,14 +248,8 @@ class FinancialAgent:
                         "cost_usd": float(planner_stats.get("cost_usd", 0.0) or 0.0),
                         "latency_ms": int(planner_stats.get("latency_ms", 0) or 0),
                         "scope": "planner",
-                        "ctx_state": {
-                            "enabled": self.ctx_enabled,
-                            "summary": self.ctx.summary if self.ctx_enabled else "",
-                            "summarized_up_to": self.ctx.summarized_up_to if self.ctx_enabled else 0,
-                            "total_messages": len(self.conversation_history),
-                            "chunk_size": CHUNK_SIZE,
-                            "recent_n": RECENT_N,
-                        },
+                        "strategy": self.ctx.active,
+                        "ctx_stats": self.ctx.stats(self.conversation_history),
                     }
                     logger.info("[CHAT] Ответ сформирован через Planning Agent")
                     return planning_result
@@ -266,25 +269,23 @@ class FinancialAgent:
         if detail_block:
             enriched_message = (
                 f"{user_message}\n\n"
-                "[ДЕТАЛЬНЫЕ ДАННЫЕ ДЛЯ ОТВЕТА]\n"
-                "Ниже — конкретные транзакции из базы данных пользователя, относящиеся к этому вопросу:\n\n"
+                "[DETAILED DATA FOR RESPONSE]\n"
+                "Below are concrete transactions from the user's dataset related to this question:\n\n"
                 f"{detail_block}"
             )
         else:
             enriched_message = user_message
 
-        # В историю сохраняем обогащённое сообщение (с детализацией если она есть).
-        self.conversation_history.append({"role": "user", "content": enriched_message})
+        if self.ctx.active == "sticky_facts":
+            self.ctx.strategy.update_facts(user_message, self.conversation_history)
 
-        system_content = SYSTEM_PROMPT + (self.csv_summary or "")
-        if self.ctx_enabled:
-            if len(self.conversation_history) > RECENT_N:
-                optimized_history = self.ctx.build_context(self.conversation_history)
-            else:
-                optimized_history = self.conversation_history
+        if self.ctx.active == "branching":
+            self.ctx.strategy.add_message("user", enriched_message)
         else:
-            optimized_history = self.conversation_history
+            self.conversation_history.append({"role": "user", "content": enriched_message})
 
+        optimized_history = self.ctx.build_context(self.conversation_history)
+        system_content = SYSTEM_PROMPT + (self.csv_summary or "")
         messages = [{"role": "system", "content": system_content}] + optimized_history
 
         enriched_flag = bool(detail_block)
@@ -294,6 +295,7 @@ class FinancialAgent:
             "messages_count": len(messages),
             "temperature": 0.7,
             "enriched": enriched_flag,
+            "strategy": self.ctx.active,
             "messages": messages,
         }
         logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
@@ -302,13 +304,19 @@ class FinancialAgent:
             len(self.conversation_history),
             self.MAX_HISTORY_MESSAGES,
         )
-        logger.info("[CHAT][REQ] model=%s messages_count=%s enriched=%s", self.model, len(messages), enriched_flag)
+        logger.info(
+            "[CHAT][REQ] model=%s messages_count=%s enriched=%s strategy=%s",
+            self.model,
+            len(messages),
+            enriched_flag,
+            self.ctx.active,
+        )
 
-        started_at = perf_counter()
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
+                max_tokens=1024,
                 temperature=0.7,
             )
         except Exception as exc:
@@ -318,15 +326,17 @@ class FinancialAgent:
                 "messages_count": len(messages),
                 "temperature": 0.7,
                 "enriched": enriched_flag,
+                "strategy": self.ctx.active,
                 "error": str(exc),
             }
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
             raise
 
-        latency_ms = int((perf_counter() - started_at) * 1000)
-
         assistant_message = self._sanitize_reply_text(response.choices[0].message.content or "")
-        self.conversation_history.append({"role": "assistant", "content": assistant_message})
+        if self.ctx.active == "branching":
+            self.ctx.strategy.add_message("assistant", assistant_message)
+        else:
+            self.conversation_history.append({"role": "assistant", "content": assistant_message})
 
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -334,6 +344,7 @@ class FinancialAgent:
         total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
         cost_usd = self._estimate_cost(prompt_tokens, completion_tokens)
         finish_reason = getattr(response.choices[0], "finish_reason", None)
+        latency = round((perf_counter() - t_start) * 1000)
 
         response_payload = {
             "scope": "chat",
@@ -345,9 +356,10 @@ class FinancialAgent:
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
             },
-            "latency_ms": latency_ms,
+            "latency_ms": latency,
             "cost_usd": cost_usd,
             "enriched": enriched_flag,
+            "strategy": self.ctx.active,
             "assistant_message": assistant_message,
         }
         logger.info("[API][OpenAI][Ответ]\n%s", self._pretty_json(response_payload))
@@ -356,20 +368,14 @@ class FinancialAgent:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
             "cost_usd": float(round(cost_usd, 6)),
-            "latency_ms": latency_ms,
+            "latency_ms": int(latency),
             "scope": "chat",
-            "ctx_state": {
-                "enabled": self.ctx_enabled,
-                "summary": self.ctx.summary if self.ctx_enabled else "",
-                "summarized_up_to": self.ctx.summarized_up_to if self.ctx_enabled else 0,
-                "total_messages": len(self.conversation_history),
-                "chunk_size": CHUNK_SIZE,
-                "recent_n": RECENT_N,
-            },
+            "strategy": self.ctx.active,
+            "ctx_stats": self.ctx.stats(self.conversation_history),
         }
 
         logger.info(
-            "[CHAT] вход=%s выход=%s всего=%s стоимость=$%.6f model=%s messages=%s enriched=%s",
+            "[CHAT] вход=%s выход=%s всего=%s стоимость=$%.6f model=%s messages=%s enriched=%s strategy=%s",
             prompt_tokens,
             completion_tokens,
             total_tokens,
@@ -377,8 +383,9 @@ class FinancialAgent:
             self.model,
             len(messages),
             enriched_flag,
+            self.ctx.active,
         )
-        logger.info("[CHAT][RESP] finish_reason=%s latency_ms=%s", finish_reason, latency_ms)
+        logger.info("[CHAT][RESP] finish_reason=%s latency_ms=%s", finish_reason, latency)
 
         return assistant_message
 
@@ -387,7 +394,7 @@ class FinancialAgent:
         self.conversation_history = []
         self.csv_summary = None
         self.df = None
-        self.ctx.reset()
+        self.ctx.reset_all()
         self.last_token_stats = None
         self.last_schema_token_stats = None
         self.planner.on_step = None
@@ -401,24 +408,24 @@ class FinancialAgent:
             return {"needs_planning": False, "confidence": 0.0, "reason": "df_not_loaded"}
 
         summary_short = (self.csv_summary or "")[:600]
-        prompt = f"""Ты — Router финансового ассистента.
-Твоя задача: определить, требуется ли для ответа ПОЛНЫЙ planning-режим (многошаговый план), или достаточно обычного краткого ответа.
+        prompt = f"""You are a routing classifier for a financial assistant.
+Your task is to decide whether the request needs FULL planning mode (multi-step plan) or a regular concise answer.
 
-Запрос пользователя:
+User request:
 "{user_message}"
 
-Краткий контекст данных:
+Short data context:
 {summary_short}
 
-Правило:
-- needs_planning=true только когда пользователь явно или по смыслу просит составить план действий/стратегию/пошаговый roadmap.
-- needs_planning=false для аналитики, уточнений, коротких реакций, вопросов по фактам и комментариев.
+Rule:
+- Set needs_planning=true only when the user explicitly or implicitly asks for a strategy, step-by-step roadmap, or action plan.
+- Set needs_planning=false for analytics questions, clarifications, short reactions, fact questions, or comments.
 
-Ответь ТОЛЬКО валидным JSON:
+Return ONLY valid JSON:
 {{
   "needs_planning": true/false,
   "confidence": 0.0,
-  "reason": "краткая причина"
+  "reason": "short reason"
 }}"""
 
         try:
@@ -524,44 +531,43 @@ class FinancialAgent:
             except Exception:
                 pass
 
-        prompt = f"""Ты — Router для финансового AI-агента.
-Твоя задача: определить нужны ли детальные транзакции из базы данных чтобы ответить на вопрос пользователя.
+        prompt = f"""You are a router for a financial AI agent.
+Your task is to decide whether detailed transaction rows are needed to answer the user's question well.
 
-ДОСТУПНЫЕ ДАННЫЕ В БАЗЕ:
-- Категории транзакций: {categories}
-- Доступные месяцы (последние 6): {available_months}
-- Полный список транзакций с полями: date, amount, category, description, op_type
+AVAILABLE DATABASE CONTEXT:
+- Transaction categories: {categories}
+- Available months (last 6): {available_months}
+- Full transaction schema: date, amount, category, description, op_type
 
-ВОПРОС ПОЛЬЗОВАТЕЛЯ: "{user_message}"
+USER QUESTION: "{user_message}"
 
-В system prompt агента уже есть агрегированная сводка (итоги по категориям, динамика по месяцам).
-Детальные строки транзакций в system prompt НЕ СОДЕРЖАТСЯ.
+The main system prompt already includes aggregated summary metrics (category totals and monthly dynamics).
+Detailed transaction rows are NOT included there.
 
-Определи:
-1. needs_data: нужны ли детальные строки транзакций для полного ответа?
-   - true: если вопрос про конкретные транзакции, список покупок, что именно куплено,
-     детали по конкретной категории/периоду/магазину
-   - false: если вопрос про общую аналитику, советы, сравнение, план действий
+Decide:
+1. needs_data: do we need detailed transaction rows for a complete answer?
+   - true: requests about specific transactions, purchase lists, exact items, or details by category/period/merchant
+   - false: general analytics, advice, comparisons, planning
 
-2. Если needs_data=true — опиши какие именно данные нужны (1-2 запроса максимум).
+2. If needs_data=true, specify what data is needed (max 1-2 queries).
 
-Ответь ТОЛЬКО валидным JSON без пояснений:
+Return ONLY valid JSON with no explanations:
 {{
   "needs_data": true/false,
-  "reason": "одно предложение почему",
+  "reason": "one short sentence",
   "queries": [
     {{
       "type": "by_category|by_period|by_description|top_expenses|top_income|anomaly_detail",
-      "category": "название категории или null",
-      "month": "YYYY-MM или null",
-      "keyword": "ключевое слово или null",
+      "category": "category name or null",
+      "month": "YYYY-MM or null",
+      "keyword": "keyword or null",
       "top_n": 20,
       "sort_by": "amount_desc|date_desc"
     }}
   ]
 }}
 
-Если needs_data=false, queries должен быть пустым массивом [].
+If needs_data=false, queries must be [].
 """
 
         try:
@@ -681,7 +687,7 @@ class FinancialAgent:
                     if cat and "category" in df.columns:
                         mask = df["category"].astype(str).str.lower().str.contains(str(cat).lower(), na=False)
                         df = df[mask]
-                        title = f"Транзакции по категории «{cat}»"
+                        title = f"Transactions for category '{cat}'"
                     else:
                         continue
 
@@ -691,7 +697,7 @@ class FinancialAgent:
                         df["_period"] = pd.to_datetime(df["date"], errors="coerce").dt.to_period("M")
                         df = df[df["_period"].astype(str) == str(month)]
                         df = df.drop(columns=["_period"])
-                        title = f"Транзакции за {month}"
+                        title = f"Transactions for {month}"
                     else:
                         continue
 
@@ -700,19 +706,19 @@ class FinancialAgent:
                     if keyword and "description" in df.columns:
                         mask = df["description"].astype(str).str.lower().str.contains(str(keyword).lower(), na=False)
                         df = df[mask]
-                        title = f"Транзакции по ключевому слову «{keyword}»"
+                        title = f"Transactions by keyword '{keyword}'"
                     else:
                         continue
 
                 elif q_type == "top_expenses":
                     if "op_type" in df.columns:
                         df = df[df["op_type"] == "расход"]
-                    title = f"Топ-{top_n} крупнейших расходов"
+                    title = f"Top-{top_n} largest expenses"
 
                 elif q_type == "top_income":
                     if "op_type" in df.columns:
                         df = df[df["op_type"] == "доход"]
-                    title = f"Топ-{top_n} крупнейших доходов"
+                    title = f"Top-{top_n} largest incomes"
 
                 elif q_type == "anomaly_detail":
                     month = query.get("month")
@@ -720,7 +726,7 @@ class FinancialAgent:
                         df["_period"] = pd.to_datetime(df["date"], errors="coerce").dt.to_period("M")
                         df = df[df["_period"].astype(str) == str(month)]
                         df = df.drop(columns=["_period"])
-                        title = f"Транзакции аномального месяца {month}"
+                        title = f"Transactions for anomaly month {month}"
                     else:
                         continue
                 else:
@@ -735,7 +741,7 @@ class FinancialAgent:
                 df = df.head(top_n)
 
                 if df.empty:
-                    results.append(f"### {title}\n_Транзакций не найдено._\n")
+                    results.append(f"### {title}\n_No transactions found._\n")
                     continue
 
                 display_cols = [c for c in ["date", "amount", "category", "description"] if c in df.columns]
@@ -747,16 +753,16 @@ class FinancialAgent:
                     )
 
                 rename_display = {
-                    "date": "Дата",
-                    "amount": "Сумма",
-                    "category": "Категория",
-                    "description": "Описание",
+                    "date": "Date",
+                    "amount": "Amount",
+                    "category": "Category",
+                    "description": "Description",
                 }
                 df_display = df_display.rename(columns=rename_display)
 
                 table_md = self._df_to_markdown(df_display)
                 results.append(
-                    f"### {title} (показано {len(df)} из {total_filtered_rows} транзакций)\n{table_md}\n"
+                    f"### {title} (showing {len(df)} of {total_filtered_rows} transactions)\n{table_md}\n"
                 )
                 total_rows += len(df)
                 logger.info("[FETCH_DETAIL] type=%s rows=%s", q_type, len(df))
@@ -819,42 +825,42 @@ class FinancialAgent:
 
         schema_text = "\n".join(schema_lines)
 
-        prompt = f"""У меня есть CSV-файл с финансовыми транзакциями.
-Вот все колонки файла и примеры их значений:
+        prompt = f"""I have a CSV file with financial transactions.
+Here are all columns and sample values:
 
 {schema_text}
 
-Определи какая колонка соответствует каждому стандартному полю.
-Используй ТОЛЬКО имена колонок из списка выше, не придумывай новые.
+Map source columns to the standard schema fields.
+Use ONLY column names from the list above. Do not invent new names.
 
-Стандартные поля:
-- date        — дата операции
-- amount      — сумма транзакции (одна числовая колонка)
-- category    — категория / тип операции
-- description — описание / назначение / получатель платежа
-- op_type     — тип операции (доход/расход), если есть отдельная колонка
-- income_col  — колонка ТОЛЬКО с доходами (если доходы и расходы в разных колонках)
-- expense_col — колонка ТОЛЬКО с расходами (если доходы и расходы в разных колонках)
+Standard fields:
+- date        - transaction date
+- amount      - transaction amount (single numeric column)
+- category    - category / operation type
+- description - description / payment purpose / counterparty
+- op_type     - operation type (income/expense), if present
+- income_col  - income-only column (if income and expenses are split)
+- expense_col - expense-only column (if income and expenses are split)
 
-Также определи:
-- amount_format: как записана сумма:
-    "standard"    — обычное число (1234.56 или -1234)
-    "space_comma" — пробел как тысячный, запятая как дробный ("1 234,56")
-    "space_dot"   — пробел как тысячный, точка как дробный ("1 234.56")
-- amount_sign: как определить знак операции:
-    "signed"     — знак в самой колонке amount (плюс/минус)
-    "split_cols" — доходы и расходы в разных колонках (income_col / expense_col)
-    "op_type_col"— есть отдельная колонка с типом операции (op_type)
+Also infer:
+- amount_format:
+    "standard"    - regular number (1234.56 or -1234)
+    "space_comma" - thousand separator as space and decimal as comma ("1 234,56")
+    "space_dot"   - thousand separator as space and decimal as dot ("1 234.56")
+- amount_sign:
+    "signed"      - sign is inside amount column (+/-)
+    "split_cols"  - income and expenses are in separate columns (income_col/expense_col)
+    "op_type_col" - separate operation-type column exists (op_type)
 
-Ответь ТОЛЬКО валидным JSON, без пояснений, без markdown-блоков:
+Return ONLY valid JSON, no explanations, no markdown:
 {{
-  "date":          "имя колонки или null",
-  "amount":        "имя колонки или null",
-  "category":      "имя колонки или null",
-  "description":   "имя колонки или null",
-  "op_type":       "имя колонки или null",
-  "income_col":    "имя колонки или null",
-  "expense_col":   "имя колонки или null",
+  "date":          "column name or null",
+  "amount":        "column name or null",
+  "category":      "column name or null",
+  "description":   "column name or null",
+  "op_type":       "column name or null",
+  "income_col":    "column name or null",
+  "expense_col":   "column name or null",
   "amount_format": "standard|space_comma|space_dot",
   "amount_sign":   "signed|split_cols|op_type_col"
 }}"""
@@ -1249,25 +1255,25 @@ class FinancialAgent:
         avg_expenses = (total_expenses / months_count) if (months_count and total_expenses is not None) else None
 
         parts: list[str] = []
-        parts.append(f"## 📁 Файл: {filename}")
+        parts.append(f"## 📁 File: {filename}")
         if date_from is not None and date_to is not None:
-            parts.append(f"- Период: {date_from.strftime('%d.%m.%Y')} – {date_to.strftime('%d.%m.%Y')}")
+            parts.append(f"- Period: {date_from.strftime('%d.%m.%Y')} – {date_to.strftime('%d.%m.%Y')}")
         else:
-            parts.append("- Период: —")
-        parts.append(f"- Всего транзакций: {self._fmt_num(len(df))}")
-        parts.append(f"- Месяцев в данных: {self._fmt_num(months_count) if months_count else '—'}")
+            parts.append("- Period: —")
+        parts.append(f"- Total transactions: {self._fmt_num(len(df))}")
+        parts.append(f"- Months in data: {self._fmt_num(months_count) if months_count else '—'}")
         parts.append("")
 
-        parts.append("## 💰 Общие показатели")
+        parts.append("## 💰 Overall Metrics")
         parts.append(
             self._md_table(
-                ["Показатель", "Значение"],
+                ["Metric", "Value"],
                 [
-                    ["Доходы (итого)", f"{self._fmt_num(total_income)} ₽"],
-                    ["Расходы (итого)", f"{self._fmt_num(total_expenses)} ₽"],
-                    ["Баланс", f"{self._fmt_signed(balance)} ₽"],
-                    ["Средний доход/мес", f"{self._fmt_num(avg_income)} ₽" if avg_income is not None else "—"],
-                    ["Средний расход/мес", f"{self._fmt_num(avg_expenses)} ₽" if avg_expenses is not None else "—"],
+                    ["Total income", f"{self._fmt_num(total_income)} ₽"],
+                    ["Total expenses", f"{self._fmt_num(total_expenses)} ₽"],
+                    ["Balance", f"{self._fmt_signed(balance)} ₽"],
+                    ["Average income/month", f"{self._fmt_num(avg_income)} ₽" if avg_income is not None else "—"],
+                    ["Average expense/month", f"{self._fmt_num(avg_expenses)} ₽" if avg_expenses is not None else "—"],
                 ],
             )
         )
@@ -1285,7 +1291,7 @@ class FinancialAgent:
 
                 rows = []
                 for cat, values in grouped.iterrows():
-                    cat_name = str(cat) if pd.notna(cat) and str(cat).strip() else "Без категории"
+                    cat_name = str(cat) if pd.notna(cat) and str(cat).strip() else "Uncategorized"
                     cat_sum = float(values["sum"])
                     cat_pct = (cat_sum / total_exp * 100.0) if total_exp > 0 else 0.0
                     rows.append([
@@ -1299,10 +1305,10 @@ class FinancialAgent:
                 rows = [["—", "0", "0.0%", "0", "0"]]
 
             parts.append("")
-            parts.append("## 📊 Расходы по категориям")
+            parts.append("## 📊 Expenses by Category")
             parts.append(
                 self._md_table(
-                    ["Категория", "Сумма ₽", "% от расходов", "Транзакций", "Среднее ₽"],
+                    ["Category", "Amount ₽", "% of expenses", "Transactions", "Average ₽"],
                     rows,
                 )
             )
@@ -1329,16 +1335,16 @@ class FinancialAgent:
                 ])
 
             parts.append("")
-            parts.append("## 📅 Динамика по месяцам")
+            parts.append("## 📅 Monthly Dynamics")
             parts.append(
                 self._md_table(
-                    ["Месяц", "Доход ₽", "Расход ₽", "Баланс ₽"],
+                    ["Month", "Income ₽", "Expense ₽", "Balance ₽"],
                     month_rows if month_rows else [["—", "0", "0", "0"]],
                 )
             )
 
         parts.append("")
-        parts.append("## 🔝 Топ-10 крупнейших трат")
+        parts.append("## 🔝 Top-10 Largest Expenses")
         expense_top = df[df["op_type"] == "расход"].copy() if "op_type" in df.columns else pd.DataFrame(columns=df.columns)
         if not expense_top.empty:
             expense_top = expense_top.sort_values("amount", ascending=False).head(10)
@@ -1351,9 +1357,9 @@ class FinancialAgent:
                     self._safe(row.get("description")) if "description" in expense_top.columns else "—",
                 ])
         else:
-            top_rows = [["—", "0", "—", "Нет расходов"]]
+            top_rows = [["—", "0", "—", "No expenses"]]
 
-        parts.append(self._md_table(["Дата", "Сумма ₽", "Категория", "Описание"], top_rows))
+        parts.append(self._md_table(["Date", "Amount ₽", "Category", "Description"], top_rows))
 
         if has_date:
             anomaly_rows = []
@@ -1364,22 +1370,22 @@ class FinancialAgent:
                         val = float(value)
                         deviation = (val - mean_exp) / mean_exp
                         if abs(deviation) > 0.30:
-                            direction = "выше" if deviation > 0 else "ниже"
+                            direction = "higher" if deviation > 0 else "lower"
                             anomaly_rows.append([
                                 month,
-                                f"Расходы на {abs(deviation) * 100:.0f}% {direction} среднего ({self._fmt_num(val)} ₽)",
+                                f"Spending is {abs(deviation) * 100:.0f}% {direction} than average ({self._fmt_num(val)} ₽)",
                             ])
 
             if not anomaly_rows:
-                anomaly_rows = [["—", "Существенных отклонений по расходам не найдено"]]
+                anomaly_rows = [["—", "No significant spending deviations found"]]
 
             parts.append("")
-            parts.append("## ⚠️ Аномалии и наблюдения")
-            parts.append(self._md_table(["Месяц", "Наблюдение"], anomaly_rows[:12]))
+            parts.append("## ⚠️ Anomalies and Observations")
+            parts.append(self._md_table(["Month", "Observation"], anomaly_rows[:12]))
 
         summary = "\n".join(parts)
         if len(summary) > 12000:
-            summary = summary[:12000] + "\n\n*Сводка сокращена для экономии токенов.*"
+            summary = summary[:12000] + "\n\n*Summary was truncated to reduce token usage.*"
 
         return summary
 

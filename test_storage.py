@@ -18,6 +18,7 @@ from storage import (
     init_db,
     load_session,
     save_csv_meta,
+    save_ctx_state,
     save_message,
     session_exists,
 )
@@ -49,12 +50,21 @@ assert data["messages"][0]["role"] == "user"
 assert data["messages"][1]["content"] == "Здравствуйте!"
 print("✅ Тест 3: save_message + load_session messages")
 
+# Тест 3.1: сохранение ctx_state
+ctx_state = {"active": "sticky_facts", "sticky_facts": {"facts": {"goal": "накопить 100к"}}}
+save_ctx_state(sid, ctx_state)
+data = load_session(sid)
+assert data is not None
+assert data["ctx_state"]["active"] == "sticky_facts"
+print("✅ Тест 3.1: save_ctx_state + load_session ctx_state")
+
 # Тест 4: очистка истории
 clear_session_messages(sid)
 data = load_session(sid)
 assert data is not None
 assert len(data["messages"]) == 0
 assert data["filename"] == "test.csv"  # метаданные сохранились
+assert data["ctx_state"] == {}
 print("✅ Тест 4: clear_session_messages (сообщения удалены, метаданные сохранены)")
 
 # Тест 5: несуществующая сессия

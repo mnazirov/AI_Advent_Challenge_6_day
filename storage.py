@@ -38,6 +38,7 @@ def init_db() -> None:
                 csv_summary         TEXT,
                 ctx_summary         TEXT    DEFAULT '',
                 ctx_summarized_upto INTEGER DEFAULT 0,
+                ctx_state           TEXT    DEFAULT '{}',
                 schema_map          TEXT DEFAULT '{}',
                 csv_path    TEXT,
                 total_tokens_in  INTEGER DEFAULT 0,
@@ -161,6 +162,16 @@ def save_context_summary(session_id: str, summary: str, summarized_up_to: int) -
         len(summary),
         summarized_up_to,
     )
+
+
+def save_ctx_state(session_id: str, ctx_state: dict) -> None:
+    """Сохраняет сериализованное состояние всех context-стратегий."""
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE sessions SET ctx_state=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (json.dumps(ctx_state, ensure_ascii=False), session_id),
+        )
+    logger.info("[STORAGE] ctx_state сохранён: сессия=%s…", session_id[:8])
 
 
 def save_message(
@@ -289,6 +300,7 @@ def load_session(session_id: str) -> dict | None:
         "csv_summary": row["csv_summary"],
         "ctx_summary": row["ctx_summary"] or "",
         "ctx_summarized_upto": int(row["ctx_summarized_upto"] or 0),
+        "ctx_state": json.loads(row["ctx_state"] or "{}"),
         "schema_map": json.loads(row["schema_map"] or "{}"),
         "csv_path": row["csv_path"],
         "total_tokens_in": int(row["total_tokens_in"] or 0),
@@ -319,6 +331,7 @@ def clear_session_messages(session_id: str) -> None:
                 cost_history='[]',
                 ctx_summary='',
                 ctx_summarized_upto=0,
+                ctx_state='{}',
                 updated_at=CURRENT_TIMESTAMP
             WHERE id=?
             """,
@@ -407,6 +420,7 @@ def _ensure_sessions_columns(conn: sqlite3.Connection) -> None:
         ("cost_history", "TEXT DEFAULT '[]'"),
         ("ctx_summary", "TEXT DEFAULT ''"),
         ("ctx_summarized_upto", "INTEGER DEFAULT 0"),
+        ("ctx_state", "TEXT DEFAULT '{}'"),
     ]
     for column_name, column_def in migration:
         if column_name not in existing:

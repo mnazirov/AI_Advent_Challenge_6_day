@@ -8,7 +8,6 @@ import threading
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from agent import FinancialAgent
-from context_manager import CHUNK_SIZE, RECENT_N
 from storage import (
     add_usage,
     clear_session_csv,
@@ -18,9 +17,9 @@ from storage import (
     init_db,
     load_csv_file,
     load_session,
-    save_context_summary,
     save_csv_file,
     save_csv_meta,
+    save_ctx_state,
     save_message,
     session_exists,
 )
@@ -90,15 +89,36 @@ def _extract_context_overflow(error_text: str) -> dict | None:
 
 
 def _build_ctx_state() -> dict:
-    """Формирует состояние ContextManager для фронтенда."""
+    """Формирует состояние активной context-стратегии для фронтенда."""
+    stats = agent.ctx.stats(agent.conversation_history)
     return {
-        "enabled": bool(getattr(agent, "ctx_enabled", True)),
-        "summary": agent.ctx.summary if getattr(agent, "ctx_enabled", True) else "",
-        "summarized_up_to": agent.ctx.summarized_up_to if getattr(agent, "ctx_enabled", True) else 0,
-        "total_messages": len(agent.conversation_history),
-        "chunk_size": CHUNK_SIZE,
-        "recent_n": RECENT_N,
+        "strategy": agent.ctx.active,
+        "stats": stats,
     }
+
+
+def _extract_last_turn_for_storage(default_user: str, default_assistant: str) -> tuple[str, str]:
+    """Возвращает последние user/assistant реплики для сохранения в БД."""
+    if agent.ctx.active == "branching":
+        branch_msgs = agent.ctx.strategy.branches.get(agent.ctx.strategy.active_branch, [])
+        assistant_content = default_assistant
+        user_content = default_user
+        if branch_msgs:
+            if branch_msgs[-1].get("role") == "assistant":
+                assistant_content = branch_msgs[-1].get("content", default_assistant)
+            for msg in reversed(branch_msgs):
+                if msg.get("role") == "user":
+                    user_content = msg.get("content", default_user)
+                    break
+        return user_content, assistant_content
+
+    user_content = default_user
+    if len(agent.conversation_history) >= 2:
+        user_content = agent.conversation_history[-2].get("content", default_user)
+    assistant_content = default_assistant
+    if agent.conversation_history:
+        assistant_content = agent.conversation_history[-1].get("content", default_assistant)
+    return user_content, assistant_content
 
 
 def _get_or_create_session() -> str:
@@ -168,6 +188,7 @@ def upload_csv():
             schema_map=(result.get("analysis") or {}).get("schema_detected", {}),
             csv_path=csv_path,
         )
+        save_ctx_state(session_id, agent.ctx.dump())
 
     if result.get("success"):
         result["token_stats"] = agent.last_schema_token_stats or {}
@@ -200,14 +221,9 @@ def chat():
 
     try:
         reply = agent.chat(message)
-        user_content = message
-        if len(agent.conversation_history) >= 2:
-            user_content = agent.conversation_history[-2].get("content", message)
+        user_content, assistant_content = _extract_last_turn_for_storage(message, reply)
         save_message(session_id, "user", user_content)
         token_stats = agent.last_token_stats or {}
-        assistant_content = reply
-        if agent.conversation_history:
-            assistant_content = agent.conversation_history[-1].get("content", reply)
         save_message(
             session_id,
             "assistant",
@@ -217,9 +233,16 @@ def chat():
             cost_usd=float(token_stats.get("cost_usd", 0.0) or 0.0),
         )
 
-        save_context_summary(session_id, agent.ctx.summary, agent.ctx.summarized_up_to)
+        save_ctx_state(session_id, agent.ctx.dump())
 
-        response_payload = {"reply": reply, "token_stats": token_stats, "ctx_state": _build_ctx_state()}
+        ctx_state = _build_ctx_state()
+        response_payload = {
+            "reply": reply,
+            "token_stats": token_stats,
+            "ctx_state": ctx_state,
+            "ctx_stats": ctx_state["stats"],
+            "ctx_strategy": ctx_state["strategy"],
+        }
         response = jsonify(response_payload)
         _log_http_response(
             "/chat",
@@ -298,17 +321,16 @@ def chat_stream():
                 else:
                     is_planning = True
                     agent.last_token_stats = getattr(agent.planner, "last_run_token_stats", None) or {}
-                    agent.conversation_history.append({"role": "user", "content": message})
-                    agent.conversation_history.append({"role": "assistant", "content": result})
+                    if agent.ctx.active == "branching":
+                        agent.ctx.strategy.add_message("user", message)
+                        agent.ctx.strategy.add_message("assistant", result)
+                    else:
+                        agent.conversation_history.append({"role": "user", "content": message})
+                        agent.conversation_history.append({"role": "assistant", "content": result})
 
-                user_content = message
-                if len(agent.conversation_history) >= 2:
-                    user_content = agent.conversation_history[-2].get("content", message)
+                user_content, assistant_content = _extract_last_turn_for_storage(message, result)
                 save_message(session_id, "user", user_content, is_planning=False)
                 token_stats = agent.last_token_stats or {}
-                assistant_content = result
-                if agent.conversation_history:
-                    assistant_content = agent.conversation_history[-1].get("content", result)
                 save_message(
                     session_id,
                     "assistant",
@@ -319,7 +341,8 @@ def chat_stream():
                     cost_usd=float(token_stats.get("cost_usd", 0.0) or 0.0),
                 )
 
-                save_context_summary(session_id, agent.ctx.summary, agent.ctx.summarized_up_to)
+                save_ctx_state(session_id, agent.ctx.dump())
+                ctx_state = _build_ctx_state()
 
                 stream_status["done"] = True
                 logger.info("[CHAT][SSE][DONE] reply_len=%s planning=%s", len(result), is_planning)
@@ -329,7 +352,9 @@ def chat_stream():
                         {
                             "text": result,
                             "token_stats": token_stats,
-                            "ctx_state": _build_ctx_state(),
+                            "ctx_state": ctx_state,
+                            "ctx_stats": ctx_state["stats"],
+                            "ctx_strategy": ctx_state["strategy"],
                         },
                     )
                 )
@@ -382,19 +407,79 @@ def chat_stream():
     return _set_session_cookie(response, session_id)
 
 
-@app.route("/debug/ctx-mgr", methods=["POST"])
-def debug_ctx_mgr():
-    """
-    Включает или отключает ContextManager для текущей сессии.
-    Вызывается из DebugMenu при переключении тумблера.
-    """
+@app.route("/debug/ctx-strategy", methods=["POST"])
+def debug_ctx_strategy():
+    """Переключает стратегию управления контекстом."""
     data = request.get_json(silent=True) or {}
-    enabled = bool(data.get("enabled", True))
+    strategy = data.get("strategy", "sliding_window")
+    try:
+        agent.ctx.set_strategy(strategy)
+        save_ctx_state(_get_or_create_session(), agent.ctx.dump())
+        return jsonify(
+            {
+                "success": True,
+                "strategy": agent.ctx.active,
+                "stats": agent.ctx.stats(agent.conversation_history),
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
 
-    agent.ctx_enabled = enabled
-    logger.info("[DEBUG] ContextManager %s", "ВКЛЮЧЁН" if enabled else "ОТКЛЮЧЁН")
 
-    return jsonify({"success": True, "ctx_mgr_enabled": agent.ctx_enabled})
+@app.route("/ctx/checkpoint", methods=["POST"])
+def ctx_checkpoint():
+    """Создать checkpoint в текущей точке диалога."""
+    data = request.get_json(silent=True) or {}
+    if agent.ctx.active != "branching":
+        return jsonify({"error": "Branching стратегия не активна"}), 400
+    name = data.get("name", f"cp_{len(agent.ctx.strategy.checkpoints) + 1}")
+    result = agent.ctx.strategy.create_checkpoint(name)
+    save_ctx_state(_get_or_create_session(), agent.ctx.dump())
+    return jsonify({"success": True, "checkpoint": result, "stats": agent.ctx.stats(agent.conversation_history)})
+
+
+@app.route("/ctx/fork", methods=["POST"])
+def ctx_fork():
+    """Создать ветку от checkpoint."""
+    data = request.get_json(silent=True) or {}
+    if agent.ctx.active != "branching":
+        return jsonify({"error": "Branching стратегия не активна"}), 400
+    checkpoint_name = data.get("checkpoint")
+    branch_name = data.get("branch_name")
+    try:
+        new_branch = agent.ctx.strategy.fork(checkpoint_name, branch_name)
+        save_ctx_state(_get_or_create_session(), agent.ctx.dump())
+        return jsonify(
+            {
+                "success": True,
+                "new_branch": new_branch,
+                "branches": agent.ctx.strategy.list_branches(),
+                "stats": agent.ctx.stats(agent.conversation_history),
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/ctx/switch-branch", methods=["POST"])
+def ctx_switch_branch():
+    """Переключиться на ветку."""
+    data = request.get_json(silent=True) or {}
+    if agent.ctx.active != "branching":
+        return jsonify({"error": "Branching стратегия не активна"}), 400
+    branch = data.get("branch")
+    try:
+        agent.ctx.strategy.switch_branch(branch)
+        save_ctx_state(_get_or_create_session(), agent.ctx.dump())
+        return jsonify(
+            {
+                "success": True,
+                "active_branch": agent.ctx.strategy.active_branch,
+                "stats": agent.ctx.stats(agent.conversation_history),
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.route("/session/restore", methods=["GET"])
@@ -429,10 +514,8 @@ def restore_session():
     if data.get("csv_summary"):
         agent.csv_summary = data.get("csv_summary")
 
-    agent.ctx.restore(
-        summary=data.get("ctx_summary", ""),
-        summarized_up_to=int(data.get("ctx_summarized_upto", 0) or 0),
-    )
+    if data.get("ctx_state"):
+        agent.ctx.restore(data["ctx_state"])
 
     df_available = False
     csv_path = data.get("csv_path")
@@ -463,6 +546,7 @@ def restore_session():
 
     ui_messages = full_messages
 
+    ctx_state = _build_ctx_state()
     payload = {
         "found": True,
         "session_id": session_id,
@@ -477,7 +561,9 @@ def restore_session():
             "total_cost_usd": float(data.get("total_cost_usd", 0.0) or 0.0),
             "cost_history": data.get("cost_history", []),
         },
-        "ctx_state": _build_ctx_state(),
+        "ctx_state": ctx_state,
+        "ctx_stats": ctx_state["stats"],
+        "ctx_strategy": ctx_state["strategy"],
     }
     _log_http_response(
         "/session/restore",
