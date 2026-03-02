@@ -1,11 +1,9 @@
 import json
 import logging
 import os
-import queue
 import re
-import threading
 
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, jsonify, render_template, request
 
 from agent import FinancialAgent
 from storage import (
@@ -145,6 +143,43 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/models", methods=["GET"])
+def get_models():
+    """Возвращает текущую модель и список доступных моделей."""
+    payload = {
+        "current_model": agent.model,
+        "available_models": agent.available_models(),
+    }
+    _log_http_response("/models", 200, payload)
+    return jsonify(payload)
+
+
+@app.route("/model", methods=["POST"])
+def set_model():
+    """Переключает модель для последующих запросов."""
+    data = request.get_json(silent=True) or {}
+    model = str(data.get("model", "")).strip()
+    _log_http_request("/model", {"model": model})
+    try:
+        current_model = agent.set_model(model)
+        payload = {
+            "success": True,
+            "current_model": current_model,
+            "available_models": agent.available_models(),
+        }
+        _log_http_response("/model", 200, payload)
+        return jsonify(payload)
+    except ValueError as exc:
+        payload = {
+            "success": False,
+            "error": str(exc),
+            "current_model": agent.model,
+            "available_models": agent.available_models(),
+        }
+        _log_http_response("/model", 400, payload)
+        return jsonify(payload), 400
+
+
 @app.route("/upload", methods=["POST"])
 def upload_csv():
     """Принимает CSV-файл, анализирует и сохраняет метаданные в сессию."""
@@ -211,9 +246,26 @@ def chat():
     """Принимает сообщение пользователя и возвращает ответ агента."""
     data = request.get_json(silent=True) or {}
     message = data.get("message", "").strip()
+    requested_model = str(data.get("model", "")).strip()
     session_id = _get_or_create_session()
 
-    _log_http_request("/chat", {"message": message, "session_id": session_id})
+    if requested_model:
+        try:
+            agent.set_model(requested_model)
+        except ValueError as exc:
+            response_payload = {"error": str(exc), "current_model": agent.model}
+            _log_http_response("/chat", 400, response_payload)
+            return jsonify(response_payload), 400
+
+    _log_http_request(
+        "/chat",
+        {
+            "message": message,
+            "session_id": session_id,
+            "requested_model": requested_model or None,
+            "current_model": agent.model,
+        },
+    )
     if not message:
         response_payload = {"error": "Пустое сообщение"}
         _log_http_response("/chat", 400, response_payload)
@@ -238,6 +290,7 @@ def chat():
         ctx_state = _build_ctx_state()
         response_payload = {
             "reply": reply,
+            "model": agent.model,
             "token_stats": token_stats,
             "ctx_state": ctx_state,
             "ctx_stats": ctx_state["stats"],
@@ -276,142 +329,11 @@ def chat():
         return jsonify(response_payload), status
 
 
-@app.route("/chat/stream", methods=["POST"])
-def chat_stream():
-    """SSE-эндпоинт: стримит шаги planning-цикла и финальный ответ."""
-    data = request.get_json(silent=True) or {}
-    message = data.get("message", "").strip()
-    session_id = _get_or_create_session()
-    _log_http_request("/chat/stream", {"message": message, "session_id": session_id})
-
-    if not message:
-        response_payload = {"error": "Пустое сообщение"}
-        _log_http_response("/chat/stream", 400, response_payload)
-        return jsonify(response_payload), 400
-
-    def generate():
-        events: queue.Queue[tuple[str, dict]] = queue.Queue()
-        stream_status = {"done": False, "error": None}
-
-        def on_step(event: dict):
-            logger.info(
-                "[CHAT][SSE][STEP] id=%s status=%s label=%s detail=%s",
-                event.get("id"),
-                event.get("status"),
-                event.get("label"),
-                event.get("detail"),
-            )
-            events.put(("step", event))
-
-        def run_worker():
-            agent.planner.on_step = on_step
-            try:
-                if agent.df is not None and getattr(agent, "ENABLE_PLANNING_ROUTER", False):
-                    result = agent.planner.run(
-                        user_message=message,
-                        df=agent.df,
-                        csv_summary=agent.csv_summary or "",
-                    )
-                else:
-                    result = None
-
-                if result is None:
-                    result = agent.chat(message)
-                    is_planning = False
-                else:
-                    is_planning = True
-                    agent.last_token_stats = getattr(agent.planner, "last_run_token_stats", None) or {}
-                    if agent.ctx.active == "branching":
-                        agent.ctx.strategy.add_message("user", message)
-                        agent.ctx.strategy.add_message("assistant", result)
-                    else:
-                        agent.conversation_history.append({"role": "user", "content": message})
-                        agent.conversation_history.append({"role": "assistant", "content": result})
-
-                user_content, assistant_content = _extract_last_turn_for_storage(message, result)
-                save_message(session_id, "user", user_content, is_planning=False)
-                token_stats = agent.last_token_stats or {}
-                save_message(
-                    session_id,
-                    "assistant",
-                    assistant_content,
-                    is_planning=is_planning,
-                    tokens_in=int(token_stats.get("prompt_tokens", 0) or 0),
-                    tokens_out=int(token_stats.get("completion_tokens", 0) or 0),
-                    cost_usd=float(token_stats.get("cost_usd", 0.0) or 0.0),
-                )
-
-                save_ctx_state(session_id, agent.ctx.dump())
-                ctx_state = _build_ctx_state()
-
-                stream_status["done"] = True
-                logger.info("[CHAT][SSE][DONE] reply_len=%s planning=%s", len(result), is_planning)
-                events.put(
-                    (
-                        "done",
-                        {
-                            "text": result,
-                            "token_stats": token_stats,
-                            "ctx_state": ctx_state,
-                            "ctx_stats": ctx_state["stats"],
-                            "ctx_strategy": ctx_state["strategy"],
-                        },
-                    )
-                )
-            except Exception as exc:
-                logger.exception("[CHAT][SSE] Ошибка обработки: %s", exc)
-                err_text = str(exc)
-                stream_status["error"] = err_text
-                payload = {"error": err_text}
-                overflow = _extract_context_overflow(err_text)
-                if overflow:
-                    payload["token_stats"] = {
-                        "prompt_tokens": int(overflow.get("prompt_tokens") or 0),
-                        "completion_tokens": 0,
-                        "total_tokens": int(overflow.get("prompt_tokens") or 0),
-                        "cost_usd": 0.0,
-                        "latency_ms": 0,
-                        "scope": "chat",
-                        "error": True,
-                        "context_limit": int(overflow.get("context_limit") or 0),
-                    }
-                events.put(("error", payload))
-            finally:
-                agent.planner.on_step = None
-                events.put(("end", {}))
-
-        worker = threading.Thread(target=run_worker, daemon=True)
-        worker.start()
-
-        while True:
-            event_type, payload = events.get()
-            if event_type == "end":
-                break
-            yield f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-        _log_http_response(
-            "/chat/stream",
-            200,
-            {
-                "session_id": session_id,
-                "done": stream_status["done"],
-                "error": stream_status["error"],
-            },
-        )
-
-    response = Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-    return _set_session_cookie(response, session_id)
-
-
 @app.route("/debug/ctx-strategy", methods=["POST"])
 def debug_ctx_strategy():
     """Переключает стратегию управления контекстом."""
     data = request.get_json(silent=True) or {}
-    strategy = data.get("strategy", "sliding_window")
+    strategy = data.get("strategy", "sticky_facts")
     try:
         agent.ctx.set_strategy(strategy)
         save_ctx_state(_get_or_create_session(), agent.ctx.dump())
@@ -550,10 +472,11 @@ def restore_session():
     payload = {
         "found": True,
         "session_id": session_id,
+        "current_model": agent.model,
+        "available_models": agent.available_models(),
         "filename": data.get("filename"),
         "has_csv": bool(data.get("csv_summary")),
         "df_available": df_available,
-        "planning_enabled": bool(getattr(agent, "ENABLE_PLANNING_ROUTER", False)),
         "messages": ui_messages,
         "token_stats_session": {
             "total_tokens_in": int(data.get("total_tokens_in", 0) or 0),

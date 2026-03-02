@@ -16,7 +16,6 @@ logger = logging.getLogger("storage")
 
 DB_PATH = Path("data/agent.db")
 UPLOADS_DIR = Path("uploads")
-MAX_RESTORE_MESSAGES = 50
 
 
 def init_db() -> None:
@@ -140,28 +139,6 @@ def save_csv_meta(
             ),
         )
     logger.info("[STORAGE] CSV-метаданные сохранены: сессия=%s… файл=%s", session_id[:8], filename)
-
-
-def save_context_summary(session_id: str, summary: str, summarized_up_to: int) -> None:
-    """
-    Сохраняет текущий summary контекста.
-    Вызывается в app.py после каждого chat-запроса если summary изменился.
-    """
-    with _get_conn() as conn:
-        conn.execute(
-            """
-            UPDATE sessions
-            SET ctx_summary = ?, ctx_summarized_upto = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (summary, int(summarized_up_to), session_id),
-        )
-    logger.info(
-        "[STORAGE] ctx_summary сохранён: сессия=%s… len=%s summarized_up_to=%s",
-        session_id[:8],
-        len(summary),
-        summarized_up_to,
-    )
 
 
 def save_ctx_state(session_id: str, ctx_state: dict) -> None:

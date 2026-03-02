@@ -1,189 +1,194 @@
-# 💰 ФинСоветник — AI-агент финансового консультанта
+# 💰 ФинСоветник
 
-Веб-приложение на Python + Flask, где AI-агент анализирует ваши финансовые данные из CSV-файла и отвечает на вопросы в формате живой консультации. В качестве языковой модели используется OpenAI API (GPT-4o-mini).
+Веб-приложение на `Python + Flask`, где AI-агент анализирует CSV с транзакциями и отвечает на вопросы по личным финансам.
 
----
+## Что умеет
 
-## 🖥️ Интерфейс
+- Загружать CSV (drag&drop или через выбор файла)
+- Автоматически нормализовать колонки и считать сводку
+- Вести чат с контекстной памятью
+- Показывать токены/стоимость и заполненность контекстного окна
+- Переключать модель прямо в UI
+- Переключать стратегию управления контекстом через debug-панель
+- Селективно передавать расходный контекст (summary sections + compact detail pack)
 
-![preview](https://i.imgur.com/placeholder.png)
+## Текущие дефолты
 
-- Загрузка CSV через drag & drop или кнопку выбора файла
-- Автоматическая сводка: доходы, расходы, баланс, количество транзакций
-- Чат с памятью диалога — агент помнит контекст всей сессии
-- Быстрые вопросы в сайдбаре для быстрого старта
-- Тёмный fintech-интерфейс с золотым акцентом
+- Модель по умолчанию: `gpt-5-mini`
+- Стратегия контекста по умолчанию: `sticky_facts`
+- Для `sticky_facts` в контексте сохраняются последние `30` сообщений
 
----
+## Структура проекта
 
-## 🏗️ Архитектура проекта
-
+```text
+AI_Advent_Challenge_6_day/
+├── agent.py                # основной агент: CSV + чат + роутинг детализации
+├── app.py                  # Flask API и веб-роуты
+├── context_strategies.py   # стратегии контекста (sliding, sticky, branching, compression)
+├── storage.py              # SQLite-хранилище сессий/сообщений
+├── templates/
+│   └── index.html          # интерфейс (HTML/CSS/JS)
+├── tests/
+│   ├── test_agent_expense_context.py
+│   ├── test_normalize.py
+│   ├── test_storage.py
+│   └── test_strategies.py
+├── requirements.txt
+└── README.md
 ```
-financial-agent/
-├── agent.py          ← класс FinancialAgent (вся логика агента)
-├── app.py            ← Flask-сервер (HTTP-роуты)
-├── requirements.txt  ← зависимости
-├── README.md
-└── templates/
-    └── index.html    ← веб-интерфейс (HTML + CSS + JS)
-```
 
-### Почему агент — отдельная сущность
+## Стек
 
-`FinancialAgent` — это класс, который инкапсулирует всю логику:
+- Backend: `Python`, `Flask`
+- LLM: `OpenAI API`
+- Data: `pandas`
+- Storage: `SQLite`
+- Frontend: `HTML/CSS/Vanilla JS`
 
-- **`load_csv()`** — парсит CSV, считает метрики через pandas, строит текстовую сводку
-- **`chat()`** — принимает сообщение пользователя, отправляет запрос в OpenAI API вместе с историей диалога, возвращает ответ
-- **`reset()`** — очищает состояние
+## Быстрый старт
 
-Flask-сервер (`app.py`) только принимает HTTP-запросы и делегирует их агенту — он ничего не знает про LLM и CSV.
-
----
-
-## ⚙️ Стек технологий
-
-| Компонент | Технология |
-|-----------|-----------|
-| Backend   | Python 3.10+, Flask |
-| LLM       | OpenAI API (gpt-4o-mini) |
-| CSV-анализ | pandas |
-| Frontend  | HTML + CSS + Vanilla JS |
-| Шрифты    | Sora, IBM Plex Mono |
-
----
-
-## 🚀 Быстрый старт
-
-### 1. Клонировать репозиторий
+### 1. Создать и активировать окружение
 
 ```bash
-git clone https://github.com/ваш-username/financial-agent.git
-cd financial-agent
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-### 2. Создать виртуальное окружение
+Для Windows:
 
-```bash
-python -m venv venv
-
-# Mac / Linux
-source venv/bin/activate
-
-# Windows
-venv\Scripts\activate
+```bat
+.venv\Scripts\activate
 ```
 
-### 3. Установить зависимости
+### 2. Установить зависимости
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Задать API ключ
-
-Получить ключ можно на [platform.openai.com](https://platform.openai.com/api-keys).
+### 3. Задать API-ключ OpenAI
 
 ```bash
-# Mac / Linux
 export OPENAI_API_KEY="sk-..."
-
-# Windows (CMD)
-set OPENAI_API_KEY=sk-...
-
-# Windows (PowerShell)
-$env:OPENAI_API_KEY="sk-..."
 ```
 
-> Или создайте файл `.env` в корне проекта:
-> ```
-> OPENAI_API_KEY=sk-...
-> ```
-> и установите `pip install python-dotenv`, добавив в `app.py`:
-> ```python
-> from dotenv import load_dotenv
-> load_dotenv()
-> ```
+Или через `.env`:
 
-### 5. Запустить
+```text
+OPENAI_API_KEY=sk-...
+```
+
+### 4. Запустить сервер
 
 ```bash
-python app.py
+python3 app.py
 ```
 
-Откройте браузер: [http://localhost:5000](http://localhost:5000)
+Откройте: [http://localhost:5000](http://localhost:5000)
 
----
+## Формат CSV
 
-## 📄 Формат CSV
+Агент пытается автоматически определить схему. Лучше всего работают файлы с полями вида:
 
-Агент автоматически определяет структуру файла. Лучший результат даёт CSV с колонками:
+- `date` / `дата`
+- `amount` / `сумма`
+- `category` / `категория`
+- `description` / `описание`
+- `op_type` / `тип`
 
-| Дата | Тип | Сумма | Категория | Описание |
-|------|-----|-------|-----------|----------|
-| 2024-01-15 | Расход | -2500 | Продукты | Магнит |
-| 2024-01-16 | Доход | 85000 | Зарплата | ООО Компания |
+Поддерживается несколько форматов:
 
-**Поддерживаемые кодировки:** UTF-8, CP1251 (Windows), Latin-1
+- единая колонка суммы с `+/-`
+- раздельные колонки доход/расход
+- разные разделители и кодировки (в т.ч. UTF-8/CP1251)
 
-**Поддерживаемые форматы сумм:**
-- Отдельные колонки доходов и расходов
-- Одна колонка: позитивные числа = доходы, негативные = расходы
-- Колонка с типом операции (`тип`, `type`, `category`, `категория`)
+## Выбор модели
 
----
+Модель можно менять:
 
-## 🔌 API эндпоинты
+- через селектор в шапке интерфейса
+- через API `POST /model`
+
+Текущий список поддерживаемых моделей берётся из `FinancialAgent.COST_PER_1M`.
+
+## API
+
+### Основные
 
 | Метод | Путь | Описание |
-|-------|------|----------|
-| `GET`  | `/` | Веб-интерфейс |
-| `POST` | `/upload` | Загрузка и анализ CSV-файла |
-| `POST` | `/chat` | Отправка сообщения агенту |
-| `POST` | `/reset` | Сброс диалога и данных |
+|---|---|---|
+| `GET` | `/` | UI |
+| `GET` | `/models` | Текущая модель + список доступных |
+| `POST` | `/model` | Сменить модель |
+| `POST` | `/upload` | Загрузить и проанализировать CSV |
+| `POST` | `/chat` | Сообщение в чат |
+| `POST` | `/reset` | Сброс истории и CSV |
+| `GET` | `/session/restore` | Восстановить сессию |
+| `POST` | `/session/new` | Создать новую сессию |
 
-### Пример запроса `/chat`
+### Debug/context
+
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/debug/ctx-strategy` | Сменить контекстную стратегию |
+| `POST` | `/ctx/checkpoint` | Создать checkpoint (branching) |
+| `POST` | `/ctx/fork` | Создать ветку от checkpoint (branching) |
+| `POST` | `/ctx/switch-branch` | Переключить ветку (branching) |
+
+### Пример `/chat`
 
 ```json
 POST /chat
 Content-Type: application/json
 
 {
-  "message": "На что я трачу больше всего?"
+  "message": "На что я трачу больше всего?",
+  "model": "gpt-5-mini"
 }
 ```
 
-```json
-200 OK
+## Контекстные стратегии
 
-{
-  "reply": "Судя по вашим данным, наибольшие расходы — на продукты питания: 18 450 ₽ за месяц..."
-}
+- `sliding_window` — последние N сообщений
+- `sticky_facts` — факты + последние N сообщений (дефолт, N=30)
+- `branching` — ветки диалога
+- `history_compression` — summary + последние N
+
+## Передача данных о расходах
+
+- В `agent.py` summary разбивается на секции: `overview`, `expense_categories`, `monthly_dynamics`, `top_expenses`, `anomalies`
+- Для каждого вопроса роутер выбирает `expense_scope` и `context_profile` (`light|medium|deep`)
+- Детализация отправляется как compact detail pack:
+  - `Summary metrics` (sum/count/avg/median/p90)
+  - агрегаты по категориям и мерчантам
+  - короткий sample транзакций (только для `deep`)
+- Для расходных detail-запросов применяется фильтр `op_type == "расход"`
+- Ограничения контекста:
+  - `MAX_DETAIL_ROWS = 12`
+  - `MAX_DETAIL_CHARS = 3500`
+  - `MAX_SYSTEM_CONTEXT_CHARS = 9000`
+
+## Тесты
+
+Запуск через `pytest`:
+
+```bash
+PYTHONPATH=. python3 -m pytest tests -q
 ```
 
----
+Или напрямую:
 
-## 🤖 Смена модели
-
-В файле `agent.py` измените строку:
-
-```python
-self.model = "gpt-4o-mini"   # быстрый и дешёвый
-# self.model = "gpt-4o"      # более мощный
-# self.model = "gpt-3.5-turbo" # самый дешёвый
+```bash
+PYTHONPATH=. python3 tests/test_normalize.py
+PYTHONPATH=. python3 tests/test_storage.py
+PYTHONPATH=. python3 tests/test_strategies.py
 ```
 
----
+## Хранилище данных
 
-## 📦 Зависимости
+- SQLite база: `data/agent.db`
+- Загруженные CSV: `uploads/`
 
-```
-openai    — клиент для OpenAI API
-flask     — веб-сервер
-pandas    — анализ CSV-файлов
-```
+## Лицензия
 
----
-
-## 📝 Лицензия
-
-MIT — используйте свободно.
+MIT

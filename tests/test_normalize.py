@@ -1,5 +1,5 @@
 """
-Запуск: python test_normalize.py
+Запуск: python tests/test_normalize.py
 Проверяет нормализацию на 4 реальных форматах банковских выгрузок.
 """
 from agent import FinancialAgent

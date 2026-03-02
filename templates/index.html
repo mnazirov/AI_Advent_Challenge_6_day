@@ -235,10 +235,33 @@ body::before {
 
 .header-title { font-size: 0.9rem; font-weight: 600; letter-spacing: -0.01em; }
 
-.header-model {
-  font-family: var(--mono); font-size: 0.66rem; color: var(--muted);
-  background: var(--s2); border: 1px solid var(--border);
-  padding: 3px 9px; border-radius: 20px;
+.model-select {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--muted2);
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 11px;
+  min-width: 132px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.model-select:hover {
+  border-color: var(--border2);
+  color: var(--text);
+}
+
+.model-select:focus {
+  outline: none;
+  border-color: rgba(232,201,109,0.45);
+  box-shadow: 0 0 0 2px rgba(232,201,109,0.12);
+}
+
+.model-select:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 /* ── Token Panel (header) ── */
@@ -966,139 +989,6 @@ textarea::placeholder { color: var(--muted); }
 
 #inputTokCount { font-weight: 600; }
 
-/* ── PLANNING INDICATOR ── */
-.planning-card {
-  background: var(--s2);
-  border: 1px solid rgba(232,201,109,0.2);
-  border-radius: 14px;
-  padding: 16px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  animation: slidedown 0.25s ease;
-  min-width: 320px;
-}
-
-.planning-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--gold);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.planning-title-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--gold);
-  box-shadow: 0 0 8px var(--gold);
-  animation: glowpulse 1.2s ease-in-out infinite;
-}
-
-.planning-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.p-step {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 8px;
-  transition: background 0.2s, opacity 0.2s;
-  opacity: 0.38;
-}
-
-.p-step.running {
-  background: rgba(232,201,109,0.06);
-  opacity: 1;
-}
-
-.p-step.done {
-  opacity: 0.72;
-}
-
-.p-step.error {
-  opacity: 0.9;
-}
-
-.p-step-icon {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.7rem;
-  flex-shrink: 0;
-}
-
-.p-step .p-step-icon.pending {
-  border: 1.5px solid var(--border2);
-  color: var(--muted);
-}
-
-.p-step.running .p-step-icon {
-  border: 1.5px solid transparent;
-  border-top-color: var(--gold);
-  background: transparent;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.p-step.done .p-step-icon {
-  background: rgba(76,201,138,0.15);
-  border: 1px solid rgba(76,201,138,0.3);
-  color: var(--green);
-}
-
-.p-step.error .p-step-icon {
-  background: rgba(240,110,110,0.12);
-  border: 1px solid rgba(240,110,110,0.3);
-  color: var(--red);
-}
-
-.p-step-label {
-  font-size: 0.76rem;
-  color: var(--text);
-  flex: 1;
-}
-
-.p-step.done .p-step-label {
-  color: var(--muted2);
-}
-
-.p-step-detail {
-  font-family: var(--mono);
-  font-size: 0.63rem;
-  color: var(--muted);
-}
-
-.planning-progress-bar {
-  height: 2px;
-  background: var(--border);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-top: 2px;
-}
-
-.planning-progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #c9a84c, #f0d878);
-  border-radius: 2px;
-  transition: width 0.4s ease;
-  width: 0%;
-}
-
 /* ── PAGE LOADER ── */
 #pageLoader {
   position: fixed;
@@ -1524,7 +1414,9 @@ textarea::placeholder { color: var(--muted); }
           <path d="M8 2.5a2.5 2.5 0 00-2.5 2.5v.5H4a1 1 0 000 2h.1A5 5 0 003 10.5V12a1 1 0 002 0v-1h6v1a1 1 0 002 0v-1.5A5 5 0 0011.9 7.5H12a1 1 0 000-2h-1.5V5A2.5 2.5 0 008 2.5z" fill="currentColor"/>
         </svg>
         </button>
-        <span class="header-model" id="headerModel">gpt-3.5-turbo</span>
+        <select class="model-select" id="modelSelect" title="Выбор модели" onchange="onModelChange(this.value)">
+          <option value="gpt-5-mini">gpt-5-mini</option>
+        </select>
       </div>
     </div>
     <div class="context-bar" id="contextBar">
@@ -1618,7 +1510,7 @@ textarea::placeholder { color: var(--muted); }
 
         <div class="dd-strategy-wrap" id="ddStrategyWrap">
 
-          <button class="dd-strategy-btn active" id="strat-sliding_window"
+          <button class="dd-strategy-btn" id="strat-sliding_window"
                   onclick="DebugMenu.setStrategy('sliding_window')">
             <span class="dsb-icon">⊟</span>
             <div class="dsb-info">
@@ -1627,7 +1519,7 @@ textarea::placeholder { color: var(--muted); }
             </div>
           </button>
 
-          <button class="dd-strategy-btn" id="strat-sticky_facts"
+          <button class="dd-strategy-btn active" id="strat-sticky_facts"
                   onclick="DebugMenu.setStrategy('sticky_facts')">
             <span class="dsb-icon">🧠</span>
             <div class="dsb-info">
@@ -1806,8 +1698,9 @@ textarea::placeholder { color: var(--muted); }
   }
 
   /* ── Session Management ── */
+  const DEFAULT_MODEL = 'gpt-5-mini';
   let currentSessionId = null;
-  let planningEnabled = false;
+  let selectedModel = DEFAULT_MODEL;
 
   window.addEventListener('DOMContentLoaded', async () => {
     buildLoaderChart();
@@ -1815,8 +1708,90 @@ textarea::placeholder { color: var(--muted); }
     setTimeout(() => setLoaderStep('connect', 'done'), 160);
     DebugMenu.init();
     TokenTracker.init();
+    await initModelSelector();
     await restoreSession();
   });
+
+  function getSelectedModel() {
+    return selectedModel || DEFAULT_MODEL;
+  }
+
+  function populateModelSelect(models) {
+    const select = document.getElementById('modelSelect');
+    if (!select) return;
+
+    const uniqueModels = Array.from(new Set((models || []).filter(Boolean)));
+    if (!uniqueModels.length) return;
+
+    select.innerHTML = '';
+    uniqueModels.forEach((modelName) => {
+      const option = document.createElement('option');
+      option.value = modelName;
+      option.textContent = modelName;
+      select.appendChild(option);
+    });
+  }
+
+  function applyCurrentModel(modelName) {
+    const normalized = (modelName || '').trim() || DEFAULT_MODEL;
+    selectedModel = normalized;
+
+    const select = document.getElementById('modelSelect');
+    if (select) {
+      const hasOption = Array.from(select.options).some((opt) => opt.value === normalized);
+      if (!hasOption) {
+        const option = document.createElement('option');
+        option.value = normalized;
+        option.textContent = normalized;
+        select.appendChild(option);
+      }
+      select.value = normalized;
+    }
+
+    TokenTracker.setModel(normalized);
+  }
+
+  async function initModelSelector() {
+    try {
+      const res = await fetch('/models');
+      const data = await parseApiResponse(res);
+      if (Array.isArray(data.available_models)) {
+        populateModelSelect(data.available_models);
+      }
+      applyCurrentModel(data.current_model || DEFAULT_MODEL);
+    } catch (err) {
+      console.warn('Не удалось загрузить список моделей:', err);
+      populateModelSelect(Object.keys(MODEL_CONTEXT));
+      applyCurrentModel(DEFAULT_MODEL);
+    }
+  }
+
+  async function onModelChange(modelName) {
+    const nextModel = (modelName || '').trim();
+    const prevModel = getSelectedModel();
+    if (!nextModel || nextModel === prevModel) return;
+
+    const select = document.getElementById('modelSelect');
+    if (select) select.disabled = true;
+    try {
+      const res = await fetch('/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: nextModel }),
+      });
+      const data = await parseApiResponse(res);
+      if (Array.isArray(data.available_models)) {
+        populateModelSelect(data.available_models);
+      }
+      applyCurrentModel(data.current_model || nextModel);
+    } catch (err) {
+      console.error('[MODEL] switch failed', err);
+      applyCurrentModel(prevModel);
+      addMsg('bot', `⚠️ Не удалось сменить модель: ${err.message || 'неизвестная ошибка'}`);
+    } finally {
+      if (select) select.disabled = false;
+    }
+  }
 
   async function restoreSession() {
     setLoaderStep('session', 'active');
@@ -1832,7 +1807,12 @@ textarea::placeholder { color: var(--muted); }
       }
 
       currentSessionId = data.session_id || null;
-      planningEnabled = Boolean(data.planning_enabled);
+      if (Array.isArray(data.available_models)) {
+        populateModelSelect(data.available_models);
+      }
+      if (data.current_model) {
+        applyCurrentModel(data.current_model);
+      }
       hideWelcome();
 
       const box = document.getElementById('messages');
@@ -2006,14 +1986,6 @@ textarea::placeholder { color: var(--muted); }
     return out.join('\n');
   }
 
-  const PLANNING_STEPS_CONFIG = [
-    { id: 'goal',       label: 'Определение цели',  icon: '◎' },
-    { id: 'decompose',  label: 'Декомпозиция задач', icon: '⊞' },
-    { id: 'execute',    label: 'Анализ данных',      icon: '⟨/⟩' },
-    { id: 'replan',     label: 'Проверка полноты',   icon: '↻' },
-    { id: 'synthesize', label: 'Синтез плана',       icon: '✦' },
-  ];
-
   /* ══════════════════════════════════════════════════════════
      DEBUG MENU
      Управляет debug-drawer и всеми debug-переключателями.
@@ -2056,7 +2028,7 @@ textarea::placeholder { color: var(--muted); }
       // Восстанавливаем состояние drawer
       if (_isOn(LS.DRAWER)) _toggleDrawer();
 
-      const storedStrategy = localStorage.getItem(LS.STRATEGY) || 'sliding_window';
+      const storedStrategy = localStorage.getItem(LS.STRATEGY) || 'sticky_facts';
       _applyStrategyUI(storedStrategy);
       _showStrategyPanel(storedStrategy);
     }
@@ -2408,11 +2380,10 @@ textarea::placeholder { color: var(--muted); }
     let _requestCount = 0;
     let _costHistory = [];
     let _sparkCtx = null;
-    let _currentModel = 'gpt-4o-mini';
+    let _currentModel = DEFAULT_MODEL;
 
     function init() {
-      const modelEl = document.querySelector('.header-model');
-      if (modelEl) setModel(modelEl.textContent.trim());
+      setModel(getSelectedModel());
 
       _sparkCtx = document.getElementById('tp-spark')?.getContext('2d') || null;
       document.getElementById('tokenPanel')?.classList.add('empty');
@@ -2670,7 +2641,7 @@ textarea::placeholder { color: var(--muted); }
     throw new Error(msg);
   }
 
-  /* ── Chat (SSE) ── */
+  /* ── Chat ── */
   async function sendMsg() {
     const inp = document.getElementById('userInput');
     const text = inp.value.trim();
@@ -2682,13 +2653,12 @@ textarea::placeholder { color: var(--muted); }
     addMsg('user', text);
     setBusy(true);
 
-    if (!planningEnabled) {
-      showTyping();
-      try {
+    showTyping();
+    try {
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, model: getSelectedModel() }),
       });
       let data = null;
       const contentType = res.headers.get('content-type') || '';
@@ -2708,6 +2678,9 @@ textarea::placeholder { color: var(--muted); }
         throw new Error((data && data.error) || `HTTP ${res.status}`);
       }
       removeTyping();
+      if (data && data.model) {
+        applyCurrentModel(data.model);
+      }
       const msgEl = addMsg('bot', (data && data.reply) || '⚠️ Пустой ответ');
       if (data && data.token_stats) {
         TokenTracker.record(data.token_stats, msgEl);
@@ -2717,168 +2690,14 @@ textarea::placeholder { color: var(--muted); }
       } else if (data && data.ctx_state) {
         DebugMenu.updateCtxState(data.ctx_state);
       }
-      } catch (err) {
-        removeTyping();
-        console.error('[CHAT] request failed', err);
-        addMsg('bot', '⚠️ Ошибка соединения с сервером.');
-      } finally {
-        setBusy(false);
-        inp.focus();
-      }
-      return;
-    }
-
-    const planningCardId = `planning-${Date.now()}`;
-    const planningEl = createPlanningCard(planningCardId);
-    appendToMessages(planningEl);
-
-    try {
-      const res = await fetch('/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split('\n\n');
-        buffer = chunks.pop() || '';
-
-        for (const chunk of chunks) {
-          const lines = chunk.split('\n').map(line => line.trim()).filter(Boolean);
-          let eventType = '';
-          let dataRaw = '';
-
-          for (const line of lines) {
-            if (line.startsWith('event:')) eventType = line.slice(6).trim();
-            if (line.startsWith('data:')) dataRaw += line.slice(5).trim();
-          }
-
-          if (!eventType || !dataRaw) continue;
-          const payload = JSON.parse(dataRaw);
-
-          if (eventType === 'step') {
-            updatePlanningStep(planningCardId, payload);
-          } else if (eventType === 'done') {
-            removePlanningCard(planningCardId);
-            const msgEl = addMsg('bot', payload.text || '⚠️ Пустой ответ');
-            if (payload.token_stats) {
-              TokenTracker.record(payload.token_stats, msgEl);
-            }
-            if (payload.ctx_stats) {
-              DebugMenu.updateCtxStats(payload.ctx_stats);
-            } else if (payload.ctx_state) {
-              DebugMenu.updateCtxState(payload.ctx_state);
-            }
-          } else if (eventType === 'error') {
-            removePlanningCard(planningCardId);
-            if (payload.token_stats) {
-              TokenTracker.record(payload.token_stats, null);
-              const overflowMsg = buildOverflowMessage(payload.token_stats);
-              if (overflowMsg) {
-                addMsg('bot', `⚠️ ${overflowMsg}`);
-                continue;
-              }
-            }
-            addMsg('bot', `⚠️ ${payload.error || 'Ошибка'}`);
-          }
-        }
-      }
     } catch (err) {
+      removeTyping();
       console.error('[CHAT] request failed', err);
-      removePlanningCard(planningCardId);
       addMsg('bot', '⚠️ Ошибка соединения с сервером.');
     } finally {
       setBusy(false);
       inp.focus();
     }
-  }
-
-  function createPlanningCard(cardId) {
-    const el = document.createElement('div');
-    el.className = 'msg bot';
-    el.id = cardId;
-
-    const stepsHtml = PLANNING_STEPS_CONFIG.map(step => `
-      <div class="p-step" id="${cardId}-${step.id}">
-        <div class="p-step-icon pending">${step.icon}</div>
-        <span class="p-step-label">${step.label}</span>
-        <span class="p-step-detail" id="${cardId}-${step.id}-detail"></span>
-      </div>
-    `).join('');
-
-    el.innerHTML = `
-      <div class="msg-avatar">💰</div>
-      <div class="msg-content">
-        <div class="msg-name">Советник</div>
-        <div class="planning-card">
-          <div class="planning-title">
-            <div class="planning-title-pulse"></div>
-            Составляю план…
-          </div>
-          <div class="planning-steps">${stepsHtml}</div>
-          <div class="planning-progress-bar">
-            <div class="planning-progress-fill" id="${cardId}-progress"></div>
-          </div>
-        </div>
-      </div>
-    `;
-    return el;
-  }
-
-  function updatePlanningStep(cardId, event) {
-    const baseId = event.id && event.id.startsWith('execute') ? 'execute' : event.id;
-    const stepEl = document.getElementById(`${cardId}-${baseId}`);
-    if (!stepEl) return;
-
-    stepEl.classList.remove('running', 'done', 'error', 'skip');
-    stepEl.classList.add(event.status || 'running');
-
-    const iconEl = stepEl.querySelector('.p-step-icon');
-    iconEl.className = 'p-step-icon';
-    if (event.status === 'done') iconEl.textContent = '✓';
-    else if (event.status === 'error') iconEl.textContent = '✕';
-    else if (event.status === 'running') iconEl.textContent = '';
-    else iconEl.textContent = '•';
-
-    const labelEl = stepEl.querySelector('.p-step-label');
-    if (event.label) labelEl.textContent = event.label;
-
-    const detailEl = document.getElementById(`${cardId}-${baseId}-detail`);
-    if (detailEl && event.detail) detailEl.textContent = event.detail;
-
-    const allSteps = document.querySelectorAll(`#${cardId} .p-step`);
-    const doneSteps = document.querySelectorAll(`#${cardId} .p-step.done`);
-    const pct = allSteps.length ? Math.round((doneSteps.length / allSteps.length) * 100) : 0;
-    const progressEl = document.getElementById(`${cardId}-progress`);
-    if (progressEl) progressEl.style.width = `${pct}%`;
-
-    const box = document.getElementById('messages');
-    box.scrollTop = box.scrollHeight;
-  }
-
-  function removePlanningCard(cardId) {
-    const el = document.getElementById(cardId);
-    if (!el) return;
-    el.style.transition = 'opacity 0.3s ease';
-    el.style.opacity = '0';
-    setTimeout(() => {
-      if (el.parentNode) el.remove();
-    }, 300);
-  }
-
-  function appendToMessages(el) {
-    const box = document.getElementById('messages');
-    box.appendChild(el);
-    box.scrollTop = box.scrollHeight;
   }
 
   function q(btn) {

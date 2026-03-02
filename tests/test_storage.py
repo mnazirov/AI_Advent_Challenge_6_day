@@ -1,5 +1,5 @@
 """
-Запуск: python test_storage.py
+Запуск: python tests/test_storage.py
 Проверяет что сессии корректно сохраняются и восстанавливаются.
 """
 

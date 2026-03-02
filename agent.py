@@ -9,8 +9,7 @@ from time import perf_counter
 from typing import Any
 
 import pandas as pd
-from openai import OpenAI
-from planner import FinancialPlanner
+from openai import BadRequestError, OpenAI
 
 from context_strategies import ContextStrategyManager
 
@@ -82,9 +81,15 @@ logger = logging.getLogger("agent")
 class FinancialAgent:
     """Финансовый агент: загрузка CSV, нормализация схемы и чат с LLM."""
 
-    MAX_HISTORY_MESSAGES = 200
-    ENABLE_PLANNING_ROUTER = False
-    PLANNING_CONFIDENCE_THRESHOLD = 0.75
+    DEFAULT_MODEL = "gpt-5-mini"
+    MAX_DETAIL_ROWS = 24
+    MAX_DETAIL_CHARS = 7000
+    MAX_SYSTEM_CONTEXT_CHARS = 18000
+    MAX_TOTAL_CONTEXT_CHARS = MAX_SYSTEM_CONTEXT_CHARS + MAX_DETAIL_CHARS
+    MODEL_COMPAT_PRESETS = {
+        # GPT-5-mini требует max_completion_tokens и default temperature.
+        "gpt-5-mini": {"token_param": "max_completion_tokens", "drop_temperature": True},
+    }
     COST_PER_1M = {
         "gpt-5.2": {"input": 1.75, "output": 14.00},
         "gpt-5.1": {"input": 1.25, "output": 10.00},
@@ -105,20 +110,58 @@ class FinancialAgent:
         "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
     }
 
-    def __init__(self):
+    def __init__(self, model: str | None = None):
         """Инициализирует клиент OpenAI и состояние сессии."""
         self._load_env_if_needed()
         self.client = OpenAI()
-        self.model = "gpt-3.5-turbo"
-        self.planner = FinancialPlanner(client=self.client, model=self.model)
+        requested_model = (model or os.getenv("OPENAI_MODEL") or self.DEFAULT_MODEL).strip()
+        try:
+            self.model = self._validate_model(requested_model)
+        except ValueError:
+            self.model = self.DEFAULT_MODEL
+            logger.warning(
+                "[INIT] Неизвестная модель %s, использую модель по умолчанию: %s",
+                requested_model,
+                self.model,
+            )
         self.conversation_history: list[dict[str, str]] = []
         self.ctx = ContextStrategyManager(client=self.client, model=self.model)
         self.csv_summary: str | None = None
+        self.summary_sections: dict[str, str] = {}
+        self.expense_cache: dict[str, Any] = {}
         self.df: pd.DataFrame | None = None
         self.last_token_stats: dict[str, Any] | None = None
         self.last_schema_token_stats: dict[str, Any] | None = None
+        self._model_compat_overrides: dict[str, dict[str, Any]] = {}
         self._last_encoding: str | None = None
         logger.info("[INIT] FinancialAgent инициализирован model=%s", self.model)
+
+    @classmethod
+    def available_models(cls) -> list[str]:
+        """Возвращает список поддерживаемых моделей."""
+        return list(cls.COST_PER_1M.keys())
+
+    def set_model(self, model: str) -> str:
+        """Переключает модель для всех LLM-вызовов агента."""
+        validated = self._validate_model(model)
+        if validated == self.model:
+            return self.model
+
+        self.model = validated
+        self.ctx.set_model(validated)
+        logger.info("[MODEL] Модель переключена на %s", validated)
+        return validated
+
+    @classmethod
+    def _validate_model(cls, model: str) -> str:
+        """Проверяет, что модель поддерживается приложением."""
+        normalized = (model or "").strip()
+        if not normalized:
+            raise ValueError("Не указана модель")
+        if normalized not in cls.COST_PER_1M:
+            supported = ", ".join(cls.available_models())
+            raise ValueError(f"Неподдерживаемая модель: {normalized}. Доступны: {supported}")
+        return normalized
 
     def load_csv(self, file_content: bytes, filename: str, restore_mode: bool = False) -> dict:
         """
@@ -157,11 +200,17 @@ class FinancialAgent:
             self._log_normalize_stats(normalized_df)
 
             summary = self._build_toon_summary(normalized_df, filename)
+            sections = self._extract_summary_sections(summary)
+            expense_cache = self._build_expense_cache(normalized_df)
             self.df = normalized_df
             if restore_mode:
                 self.csv_summary = summary
+                self.summary_sections = sections
+                self.expense_cache = expense_cache
             else:
                 self.csv_summary = summary
+                self.summary_sections = sections
+                self.expense_cache = expense_cache
                 self.conversation_history = []
                 self.ctx.reset_all()
 
@@ -212,59 +261,25 @@ class FinancialAgent:
         """
         t_start = perf_counter()
 
-        # Делегируем planning-запросы только если включён routing.
-        if self.ENABLE_PLANNING_ROUTER and self.df is not None:
-            planning_decision = self._route_planning(user_message)
-            use_planner = (
-                bool(planning_decision.get("needs_planning"))
-                and float(planning_decision.get("confidence", 0.0) or 0.0) >= self.PLANNING_CONFIDENCE_THRESHOLD
-            )
-            logger.info(
-                "[CHAT][ROUTE] planner=%s confidence=%.2f threshold=%.2f reason=%s",
-                use_planner,
-                float(planning_decision.get("confidence", 0.0) or 0.0),
-                self.PLANNING_CONFIDENCE_THRESHOLD,
-                planning_decision.get("reason", ""),
-            )
-            if use_planner:
-                planning_result = self.planner.run(
-                    user_message=user_message,
-                    df=self.df,
-                    csv_summary=self.csv_summary or "",
-                )
-                if planning_result is not None:
-                    planning_result = self._sanitize_reply_text(planning_result)
-                    if self.ctx.active == "branching":
-                        self.ctx.strategy.add_message("user", user_message)
-                        self.ctx.strategy.add_message("assistant", planning_result)
-                    else:
-                        self.conversation_history.append({"role": "user", "content": user_message})
-                        self.conversation_history.append({"role": "assistant", "content": planning_result})
-                    planner_stats = getattr(self.planner, "last_run_token_stats", None) or {}
-                    self.last_token_stats = {
-                        "prompt_tokens": int(planner_stats.get("prompt_tokens", 0) or 0),
-                        "completion_tokens": int(planner_stats.get("completion_tokens", 0) or 0),
-                        "total_tokens": int(planner_stats.get("total_tokens", 0) or 0),
-                        "cost_usd": float(planner_stats.get("cost_usd", 0.0) or 0.0),
-                        "latency_ms": int(planner_stats.get("latency_ms", 0) or 0),
-                        "scope": "planner",
-                        "strategy": self.ctx.active,
-                        "ctx_stats": self.ctx.stats(self.conversation_history),
-                    }
-                    logger.info("[CHAT] Ответ сформирован через Planning Agent")
-                    return planning_result
-        elif not self.ENABLE_PLANNING_ROUTER:
-            logger.info("[CHAT][ROUTE] planning_router disabled")
-
         detail_block = ""
-        route_decision = {"needs_data": False, "queries": []}
+        route_decision = {
+            "needs_data": False,
+            "reason": "df_not_loaded",
+            "queries": [],
+            "expense_scope": "overview",
+            "context_profile": "light",
+        }
 
         if self.df is not None:
             route_decision = self._route(user_message)
             if route_decision.get("needs_data") and route_decision.get("queries"):
-                detail_block = self._fetch_detail(route_decision["queries"])
+                detail_block = self._fetch_detail(route_decision["queries"], route_decision)
                 if detail_block:
                     logger.info("[CHAT] Контекст обогащён детальными данными (%s символов)", len(detail_block))
+
+        summary_context = self._compose_system_context(route_decision)
+        system_content = SYSTEM_PROMPT if not summary_context else f"{SYSTEM_PROMPT}\n\n{summary_context}"
+        system_content, detail_block = self._fit_context_budget(system_content, detail_block, route_decision)
 
         if detail_block:
             enriched_message = (
@@ -285,7 +300,6 @@ class FinancialAgent:
             self.conversation_history.append({"role": "user", "content": enriched_message})
 
         optimized_history = self.ctx.build_context(self.conversation_history)
-        system_content = SYSTEM_PROMPT + (self.csv_summary or "")
         messages = [{"role": "system", "content": system_content}] + optimized_history
 
         enriched_flag = bool(detail_block)
@@ -296,13 +310,16 @@ class FinancialAgent:
             "temperature": 0.7,
             "enriched": enriched_flag,
             "strategy": self.ctx.active,
+            "expense_scope": route_decision.get("expense_scope"),
+            "context_profile": route_decision.get("context_profile"),
+            "system_chars": len(system_content),
+            "detail_chars": len(detail_block),
             "messages": messages,
         }
         logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
         logger.info(
-            "[CHAT][HISTORY] stored_messages=%s max=%s",
+            "[CHAT][HISTORY] stored_messages=%s",
             len(self.conversation_history),
-            self.MAX_HISTORY_MESSAGES,
         )
         logger.info(
             "[CHAT][REQ] model=%s messages_count=%s enriched=%s strategy=%s",
@@ -313,10 +330,10 @@ class FinancialAgent:
         )
 
         try:
-            response = self.client.chat.completions.create(
+            response = self._create_chat_completion(
                 model=self.model,
                 messages=messages,
-                max_tokens=1024,
+                max_tokens=2048,
                 temperature=0.7,
             )
         except Exception as exc:
@@ -393,116 +410,12 @@ class FinancialAgent:
         """Сбрасывает диалог и загруженные данные."""
         self.conversation_history = []
         self.csv_summary = None
+        self.summary_sections = {}
+        self.expense_cache = {}
         self.df = None
         self.ctx.reset_all()
         self.last_token_stats = None
         self.last_schema_token_stats = None
-        self.planner.on_step = None
-
-    def _route_planning(self, user_message: str) -> dict:
-        """
-        Отдельный LLM-роутер: определяет, нужен ли planning-режим для запроса.
-        Возвращает needs_planning, confidence и reason.
-        """
-        if self.df is None:
-            return {"needs_planning": False, "confidence": 0.0, "reason": "df_not_loaded"}
-
-        summary_short = (self.csv_summary or "")[:600]
-        prompt = f"""You are a routing classifier for a financial assistant.
-Your task is to decide whether the request needs FULL planning mode (multi-step plan) or a regular concise answer.
-
-User request:
-"{user_message}"
-
-Short data context:
-{summary_short}
-
-Rule:
-- Set needs_planning=true only when the user explicitly or implicitly asks for a strategy, step-by-step roadmap, or action plan.
-- Set needs_planning=false for analytics questions, clarifications, short reactions, fact questions, or comments.
-
-Return ONLY valid JSON:
-{{
-  "needs_planning": true/false,
-  "confidence": 0.0,
-  "reason": "short reason"
-}}"""
-
-        try:
-            messages = [{"role": "user", "content": prompt}]
-            request_payload = {
-                "scope": "planning_router",
-                "model": self.model,
-                "messages_count": len(messages),
-                "temperature": 0,
-                "messages": messages,
-            }
-            logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
-
-            started_at = perf_counter()
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0,
-            )
-            latency_ms = int((perf_counter() - started_at) * 1000)
-
-            raw = (response.choices[0].message.content or "").strip()
-            usage = getattr(response, "usage", None)
-            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-            total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
-            cost_usd = self._estimate_cost(prompt_tokens, completion_tokens)
-            finish_reason = getattr(response.choices[0], "finish_reason", None)
-
-            response_payload = {
-                "scope": "planning_router",
-                "id": getattr(response, "id", None),
-                "model": getattr(response, "model", self.model),
-                "finish_reason": finish_reason,
-                "usage": {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens,
-                },
-                "latency_ms": latency_ms,
-                "cost_usd": cost_usd,
-                "assistant_message": raw,
-            }
-            logger.info("[API][OpenAI][Ответ]\n%s", self._pretty_json(response_payload))
-
-            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if not json_match:
-                raise ValueError("JSON не найден в ответе planning router")
-
-            parsed = json.loads(json_match.group())
-            if not isinstance(parsed, dict):
-                raise ValueError("planning router вернул не dict")
-
-            confidence = parsed.get("confidence", 0.0)
-            try:
-                confidence = float(confidence)
-            except (TypeError, ValueError):
-                confidence = 0.0
-            confidence = max(0.0, min(1.0, confidence))
-
-            decision = {
-                "needs_planning": bool(parsed.get("needs_planning")),
-                "confidence": confidence,
-                "reason": str(parsed.get("reason") or ""),
-            }
-            return decision
-        except Exception as exc:
-            error_payload = {
-                "scope": "planning_router",
-                "model": self.model,
-                "messages_count": 1,
-                "temperature": 0,
-                "error": str(exc),
-            }
-            logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
-            logger.warning("[CHAT][ROUTE] planning router error: %s", exc)
-            return {"needs_planning": False, "confidence": 0.0, "reason": "router_error"}
 
     def _route(self, user_message: str) -> dict:
         """
@@ -511,7 +424,13 @@ Return ONLY valid JSON:
         При ошибке возвращает {"needs_data": False} — основной запрос идёт без деталей.
         """
         if self.df is None:
-            return {"needs_data": False}
+            return {
+                "needs_data": False,
+                "reason": "df_not_loaded",
+                "queries": [],
+                "expense_scope": "overview",
+                "context_profile": "light",
+            }
 
         categories = []
         if "category" in self.df.columns:
@@ -549,12 +468,26 @@ Decide:
    - true: requests about specific transactions, purchase lists, exact items, or details by category/period/merchant
    - false: general analytics, advice, comparisons, planning
 
-2. If needs_data=true, specify what data is needed (max 1-2 queries).
+2. Select expense_scope:
+   - overview: high-level expense answer
+   - category_breakdown: expenses by category
+   - time_trend: monthly/period trend
+   - merchant_detail: merchants/descriptions/transaction details
+   - anomaly: unusual spikes or outliers
+
+3. Select context_profile:
+   - light: only summary sections
+   - medium: summary + aggregates
+   - deep: summary + aggregates + sample transactions
+
+4. If needs_data=true, specify what data is needed (max 1-2 queries).
 
 Return ONLY valid JSON with no explanations:
 {{
   "needs_data": true/false,
   "reason": "one short sentence",
+  "expense_scope": "overview|category_breakdown|time_trend|merchant_detail|anomaly",
+  "context_profile": "light|medium|deep",
   "queries": [
     {{
       "type": "by_category|by_period|by_description|top_expenses|top_income|anomaly_detail",
@@ -582,7 +515,7 @@ If needs_data=false, queries must be [].
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
 
             started_at = perf_counter()
-            response = self.client.chat.completions.create(
+            response = self._create_chat_completion(
                 model=self.model,
                 messages=route_messages,
                 temperature=0,
@@ -636,13 +569,32 @@ If needs_data=false, queries must be [].
             queries = decision.get("queries", [])
             if not isinstance(queries, list):
                 queries = []
+            queries = self._normalize_router_queries(queries)
+            if not needs_data:
+                queries = []
+
+            scope = str(decision.get("expense_scope") or "").strip().lower()
+            if scope not in {"overview", "category_breakdown", "time_trend", "merchant_detail", "anomaly"}:
+                scope = self._infer_expense_scope(user_message)
+
+            profile = str(decision.get("context_profile") or "").strip().lower()
+            if profile not in {"light", "medium", "deep"}:
+                profile = self._default_context_profile(scope, needs_data)
 
             normalized = {
                 "needs_data": needs_data,
                 "reason": decision.get("reason", ""),
-                "queries": queries[:2],
+                "queries": queries,
+                "expense_scope": scope,
+                "context_profile": profile,
             }
-            logger.info("[ROUTER] needs_data=%s reason=%s", normalized.get("needs_data"), normalized.get("reason"))
+            logger.info(
+                "[ROUTER] needs_data=%s scope=%s profile=%s reason=%s",
+                normalized.get("needs_data"),
+                normalized.get("expense_scope"),
+                normalized.get("context_profile"),
+                normalized.get("reason"),
+            )
             return normalized
 
         except Exception as exc:
@@ -655,123 +607,264 @@ If needs_data=false, queries must be [].
             }
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
             logger.warning("[ROUTER] Ошибка: %s — пропускаю обогащение", exc)
-            return {"needs_data": False}
+            fallback_scope = self._infer_expense_scope(user_message)
+            return {
+                "needs_data": False,
+                "reason": "router_error",
+                "queries": [],
+                "expense_scope": fallback_scope,
+                "context_profile": "light",
+            }
 
-    def _fetch_detail(self, queries: list) -> str:
+    def _fetch_detail(self, queries: list, route_decision: dict | None = None) -> str:
         """
-        Выполняет pandas-запросы к self.df по инструкциям Router.
-        Возвращает markdown-таблицы с детальными транзакциями.
-        Максимум 2 запроса и 30 строк суммарно.
+        Формирует компактный TOON detail-pack:
+        1) summary-метрики
+        2) агрегаты (категории/мерчанты)
+        3) sample-транзакции (в зависимости от context_profile).
         """
         if not queries or self.df is None:
             return ""
 
-        results = []
-        total_rows = 0
-        max_total_rows = 30
+        context_profile = str((route_decision or {}).get("context_profile") or "medium").lower()
+        if context_profile not in {"light", "medium", "deep"}:
+            context_profile = "medium"
 
+        if context_profile == "light":
+            return ""
+
+        packs: list[str] = []
         for query in queries[:2]:
-            if total_rows >= max_total_rows:
-                break
-
-            q_type = query.get("type")
-            requested_top_n = int(query.get("top_n", 20) or 20)
-            top_n = max(1, min(requested_top_n, max_total_rows - total_rows))
-            sort_by = query.get("sort_by", "amount_desc")
-            df = self.df.copy()
-            total_filtered_rows = 0
-
             try:
-                if q_type == "by_category":
-                    cat = query.get("category")
-                    if cat and "category" in df.columns:
-                        mask = df["category"].astype(str).str.lower().str.contains(str(cat).lower(), na=False)
-                        df = df[mask]
-                        title = f"Transactions for category '{cat}'"
-                    else:
-                        continue
-
-                elif q_type == "by_period":
-                    month = query.get("month")
-                    if month and "date" in df.columns:
-                        df["_period"] = pd.to_datetime(df["date"], errors="coerce").dt.to_period("M")
-                        df = df[df["_period"].astype(str) == str(month)]
-                        df = df.drop(columns=["_period"])
-                        title = f"Transactions for {month}"
-                    else:
-                        continue
-
-                elif q_type == "by_description":
-                    keyword = query.get("keyword", "")
-                    if keyword and "description" in df.columns:
-                        mask = df["description"].astype(str).str.lower().str.contains(str(keyword).lower(), na=False)
-                        df = df[mask]
-                        title = f"Transactions by keyword '{keyword}'"
-                    else:
-                        continue
-
-                elif q_type == "top_expenses":
-                    if "op_type" in df.columns:
-                        df = df[df["op_type"] == "расход"]
-                    title = f"Top-{top_n} largest expenses"
-
-                elif q_type == "top_income":
-                    if "op_type" in df.columns:
-                        df = df[df["op_type"] == "доход"]
-                    title = f"Top-{top_n} largest incomes"
-
-                elif q_type == "anomaly_detail":
-                    month = query.get("month")
-                    if month and "date" in df.columns:
-                        df["_period"] = pd.to_datetime(df["date"], errors="coerce").dt.to_period("M")
-                        df = df[df["_period"].astype(str) == str(month)]
-                        df = df.drop(columns=["_period"])
-                        title = f"Transactions for anomaly month {month}"
-                    else:
-                        continue
-                else:
-                    continue
-
-                if sort_by == "amount_desc" and "amount" in df.columns:
-                    df = df.sort_values("amount", ascending=False)
-                elif sort_by == "date_desc" and "date" in df.columns:
-                    df = df.sort_values("date", ascending=False)
-
-                total_filtered_rows = len(df)
-                df = df.head(top_n)
-
-                if df.empty:
-                    results.append(f"### {title}\n_No transactions found._\n")
-                    continue
-
-                display_cols = [c for c in ["date", "amount", "category", "description"] if c in df.columns]
-                df_display = df[display_cols].copy()
-
-                if "amount" in df_display.columns:
-                    df_display["amount"] = df_display["amount"].apply(
-                        lambda x: f"{x:,.0f} ₽".replace(",", " ") if pd.notna(x) else "—"
-                    )
-
-                rename_display = {
-                    "date": "Date",
-                    "amount": "Amount",
-                    "category": "Category",
-                    "description": "Description",
-                }
-                df_display = df_display.rename(columns=rename_display)
-
-                table_md = self._df_to_markdown(df_display)
-                results.append(
-                    f"### {title} (showing {len(df)} of {total_filtered_rows} transactions)\n{table_md}\n"
+                filtered_df, title = self._apply_detail_query(query)
+                pack = self._build_expense_detail_pack(
+                    title=title,
+                    df=filtered_df,
+                    query=query,
+                    context_profile=context_profile,
                 )
-                total_rows += len(df)
-                logger.info("[FETCH_DETAIL] type=%s rows=%s", q_type, len(df))
-
+                if pack:
+                    packs.append(pack)
+                if sum(len(p) for p in packs) >= self.MAX_DETAIL_CHARS:
+                    break
             except Exception as exc:
-                logger.warning("[FETCH_DETAIL] Ошибка запроса %s: %s", q_type, exc)
+                logger.warning("[FETCH_DETAIL] Ошибка запроса %s: %s", query.get("type"), exc)
                 continue
 
-        return "\n".join(results)
+        detail_block = "\n\n".join(packs)
+        if len(detail_block) > self.MAX_DETAIL_CHARS:
+            detail_block = self._degrade_detail_block(detail_block, self.MAX_DETAIL_CHARS)
+
+        return detail_block
+
+    def _apply_detail_query(self, query: dict) -> tuple[pd.DataFrame, str]:
+        """Применяет query к DataFrame и возвращает выборку + заголовок блока."""
+        if self.df is None:
+            return pd.DataFrame(), "Detail"
+
+        q_type = str(query.get("type") or "").strip()
+        sort_by = str(query.get("sort_by") or "amount_desc")
+        try:
+            top_n = int(query.get("top_n", 20))
+        except Exception:
+            top_n = 20
+        top_n = max(1, min(50, top_n))
+        df = self.df.copy()
+        title = "Detail"
+
+        if q_type == "by_category":
+            cat = str(query.get("category") or "").strip()
+            title = f"Category detail: {cat or 'unknown'}"
+            if cat and "category" in df.columns:
+                mask = df["category"].astype(str).str.lower().str.contains(cat.lower(), na=False)
+                df = df[mask]
+            else:
+                return pd.DataFrame(), title
+        elif q_type == "by_period":
+            month = str(query.get("month") or "").strip()
+            title = f"Period detail: {month or 'unknown'}"
+            if month and "date" in df.columns:
+                periods = pd.to_datetime(df["date"], errors="coerce").dt.to_period("M").astype(str)
+                df = df[periods == month]
+            else:
+                return pd.DataFrame(), title
+        elif q_type == "by_description":
+            keyword = str(query.get("keyword") or "").strip()
+            title = f"Merchant/detail keyword: {keyword or 'unknown'}"
+            if keyword and "description" in df.columns:
+                mask = df["description"].astype(str).str.lower().str.contains(keyword.lower(), na=False)
+                df = df[mask]
+            else:
+                return pd.DataFrame(), title
+        elif q_type == "top_expenses":
+            title = "Top expenses detail"
+        elif q_type == "top_income":
+            title = "Top income detail"
+            if "op_type" in df.columns:
+                df = df[df["op_type"] == "доход"]
+        elif q_type == "anomaly_detail":
+            month = str(query.get("month") or "").strip()
+            title = f"Anomaly month detail: {month or 'unknown'}"
+            if month and "date" in df.columns:
+                periods = pd.to_datetime(df["date"], errors="coerce").dt.to_period("M").astype(str)
+                df = df[periods == month]
+            else:
+                return pd.DataFrame(), title
+        else:
+            return pd.DataFrame(), title
+
+        if q_type in {"by_category", "by_period", "by_description", "top_expenses", "anomaly_detail"}:
+            df = self._keep_expense_rows(df)
+
+        if sort_by == "date_desc" and "date" in df.columns:
+            df = df.sort_values("date", ascending=False)
+        elif sort_by == "amount_desc" and "amount" in df.columns:
+            df = df.sort_values("amount", ascending=False)
+
+        if q_type in {"top_expenses", "top_income"}:
+            df = df.head(top_n)
+
+        return df, title
+
+    def _keep_expense_rows(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Для expense-query всегда оставляет только расходные строки."""
+        if "op_type" not in df.columns:
+            return df
+        return df[df["op_type"] == "расход"]
+
+    def _build_expense_detail_pack(
+        self,
+        title: str,
+        df: pd.DataFrame,
+        query: dict,
+        context_profile: str,
+    ) -> str:
+        """Собирает TOON-блок с метриками, агрегатами и sample-транзакциями."""
+        if df.empty:
+            return f"### {title}\n_No transactions found._"
+
+        amount = pd.to_numeric(df.get("amount"), errors="coerce").dropna() if "amount" in df.columns else pd.Series(dtype="float64")
+        total = float(amount.sum()) if not amount.empty else 0.0
+        count = int(len(amount))
+        avg = float(amount.mean()) if not amount.empty else 0.0
+        median = float(amount.median()) if not amount.empty else 0.0
+        p90 = float(amount.quantile(0.9)) if not amount.empty else 0.0
+
+        parts: list[str] = [f"### {title}"]
+        parts.append("#### Summary metrics")
+        parts.append(
+            self._md_table(
+                ["sum ₽", "count", "avg ₽", "median ₽", "p90 ₽"],
+                [[self._fmt_num(total), count, self._fmt_num(avg), self._fmt_num(median), self._fmt_num(p90)]],
+            )
+        )
+
+        cat_rows = self._build_category_aggregate_rows(df, query)
+        if cat_rows:
+            parts.append("#### Aggregates: categories")
+            parts.append(self._md_table(["Category", "Amount ₽", "Transactions"], cat_rows))
+
+        merchant_rows = self._build_merchant_aggregate_rows(df, query)
+        if merchant_rows:
+            parts.append("#### Aggregates: merchants/descriptions")
+            parts.append(self._md_table(["Merchant/Description", "Amount ₽", "Transactions"], merchant_rows))
+
+        sample_n = 0
+        if context_profile == "deep":
+            sample_n = self.MAX_DETAIL_ROWS
+
+        if sample_n > 0:
+            sample_df = df.head(sample_n).copy()
+            if "description" in sample_df.columns:
+                sample_df["description"] = sample_df["description"].apply(lambda x: self._truncate_text(str(x), 72))
+            if "amount" in sample_df.columns:
+                sample_df["amount"] = sample_df["amount"].apply(self._fmt_num)
+            if "date" in sample_df.columns:
+                sample_df["date"] = sample_df["date"].apply(self._fmt_date)
+
+            cols = [c for c in ["date", "amount", "category", "description"] if c in sample_df.columns]
+            if cols:
+                parts.append("#### Sample transactions")
+                parts.append(self._df_to_markdown(sample_df[cols].rename(columns={
+                    "date": "Date",
+                    "amount": "Amount ₽",
+                    "category": "Category",
+                    "description": "Description",
+                })))
+
+        return "\n".join(parts)
+
+    def _build_category_aggregate_rows(self, df: pd.DataFrame, query: dict) -> list[list[Any]]:
+        """Возвращает top-категории по сумме (использует кэш, когда возможно)."""
+        q_type = str(query.get("type") or "")
+        if q_type == "top_expenses" and isinstance(self.expense_cache.get("expense_by_category"), pd.DataFrame):
+            source = self.expense_cache["expense_by_category"].head(5)
+            return [
+                [self._safe(row.get("category")), self._fmt_num(row.get("sum")), int(row.get("count", 0))]
+                for _, row in source.iterrows()
+            ]
+
+        if "category" not in df.columns or "amount" not in df.columns:
+            return []
+        grouped = (
+            df.groupby("category", dropna=False)["amount"]
+            .agg(["sum", "count"])
+            .sort_values("sum", ascending=False)
+            .head(5)
+            .reset_index()
+        )
+        return [
+            [self._safe(row.get("category")), self._fmt_num(row.get("sum")), int(row.get("count", 0))]
+            for _, row in grouped.iterrows()
+        ]
+
+    def _build_merchant_aggregate_rows(self, df: pd.DataFrame, query: dict) -> list[list[Any]]:
+        """Возвращает top-мерчанты/описания (использует кэш recurring, когда возможно)."""
+        q_type = str(query.get("type") or "")
+        if q_type == "top_expenses" and isinstance(self.expense_cache.get("recurring_expenses"), pd.DataFrame):
+            source = self.expense_cache["recurring_expenses"].head(5)
+            return [
+                [self._safe(row.get("description")), self._fmt_num(row.get("total_amount")), int(row.get("count", 0))]
+                for _, row in source.iterrows()
+            ]
+
+        if "description" not in df.columns or "amount" not in df.columns:
+            return []
+        grouped = (
+            df.groupby("description", dropna=False)["amount"]
+            .agg(["sum", "count"])
+            .sort_values("sum", ascending=False)
+            .head(5)
+            .reset_index()
+        )
+        return [
+            [self._truncate_text(self._safe(row.get("description")), 60), self._fmt_num(row.get("sum")), int(row.get("count", 0))]
+            for _, row in grouped.iterrows()
+        ]
+
+    def _degrade_detail_block(self, detail_block: str, limit: int) -> str:
+        """Понижает детализацию detail-блока в несколько шагов до целевого лимита."""
+        if len(detail_block) <= limit:
+            return detail_block
+
+        # 1) убрать sample-транзакции (самый тяжёлый слой).
+        compact = re.sub(r"\n#### Sample transactions[\s\S]*?(?=\n### |\Z)", "", detail_block, flags=re.MULTILINE)
+        if len(compact) <= limit:
+            return compact
+
+        # 2) подрезать длинные строки.
+        trimmed_lines = []
+        for line in compact.splitlines():
+            if len(line) > 180:
+                trimmed_lines.append(line[:177] + "...")
+            else:
+                trimmed_lines.append(line)
+        compact = "\n".join(trimmed_lines)
+        if len(compact) <= limit:
+            return compact
+
+        # 3) жёсткое ограничение.
+        return compact[:limit] + "\n\n_Detail pack was truncated to fit context budget._"
 
     def _df_to_markdown(self, df: pd.DataFrame) -> str:
         """Конвертирует DataFrame в markdown-таблицу без внешних зависимостей."""
@@ -876,7 +969,7 @@ Return ONLY valid JSON, no explanations, no markdown:
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
 
             started_at = perf_counter()
-            response = self.client.chat.completions.create(
+            response = self._create_chat_completion(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
@@ -1389,6 +1482,241 @@ Return ONLY valid JSON, no explanations, no markdown:
 
         return summary
 
+    def _extract_summary_sections(self, summary: str) -> dict[str, str]:
+        """Разбивает полный TOON-summary на логические секции для селективной передачи в LLM."""
+        if not summary:
+            return {}
+
+        blocks: list[tuple[str, list[str]]] = []
+        current_title = ""
+        current_lines: list[str] = []
+        for line in summary.splitlines():
+            if line.startswith("## "):
+                if current_title or current_lines:
+                    blocks.append((current_title, current_lines))
+                current_title = line
+                current_lines = [line]
+            else:
+                current_lines.append(line)
+        if current_title or current_lines:
+            blocks.append((current_title, current_lines))
+
+        indexed = {title: "\n".join(lines).strip() for title, lines in blocks}
+        sections: dict[str, str] = {}
+
+        overview_blocks: list[str] = []
+        for title in indexed:
+            if "📁 File" in title or "💰 Overall Metrics" in title:
+                overview_blocks.append(indexed[title])
+        sections["overview"] = "\n\n".join(overview_blocks).strip() if overview_blocks else summary
+
+        sections["expense_categories"] = next(
+            (block for title, block in indexed.items() if "📊 Expenses by Category" in title),
+            "",
+        )
+        sections["monthly_dynamics"] = next(
+            (block for title, block in indexed.items() if "📅 Monthly Dynamics" in title),
+            "",
+        )
+        sections["top_expenses"] = next(
+            (block for title, block in indexed.items() if "🔝 Top-10 Largest Expenses" in title),
+            "",
+        )
+        sections["anomalies"] = next(
+            (block for title, block in indexed.items() if "⚠️ Anomalies and Observations" in title),
+            "",
+        )
+
+        return sections
+
+    def _compose_system_context(self, route_decision: dict) -> str:
+        """Собирает селективный контекст из summary-секций по типу пользовательского запроса."""
+        if not self.summary_sections:
+            return self.csv_summary or ""
+
+        scope = str(route_decision.get("expense_scope") or "overview")
+        selected_keys: list[str]
+        if scope in {"time_trend", "anomaly"}:
+            selected_keys = ["overview", "monthly_dynamics", "anomalies"]
+        elif scope in {"category_breakdown", "merchant_detail"}:
+            selected_keys = ["overview", "expense_categories"]
+        else:
+            selected_keys = ["overview", "expense_categories", "top_expenses"]
+
+        chunks = [self.summary_sections.get(k, "").strip() for k in selected_keys]
+        chunks = [chunk for chunk in chunks if chunk]
+        if not chunks:
+            return self.csv_summary or ""
+        return "\n\n".join(chunks)
+
+    def _fit_context_budget(self, system_content: str, detail_block: str, route_decision: dict) -> tuple[str, str]:
+        """Ограничивает размер system+detail контекста в несколько шагов деградации."""
+        system_text = system_content
+        detail_text = detail_block
+
+        if len(system_text) > self.MAX_SYSTEM_CONTEXT_CHARS:
+            system_text = system_text[: self.MAX_SYSTEM_CONTEXT_CHARS] + "\n\n[System summary truncated]"
+        if len(detail_text) > self.MAX_DETAIL_CHARS:
+            detail_text = self._degrade_detail_block(detail_text, self.MAX_DETAIL_CHARS)
+
+        total_len = len(system_text) + len(detail_text)
+        if total_len <= self.MAX_TOTAL_CONTEXT_CHARS:
+            return system_text, detail_text
+
+        if detail_text:
+            detail_text = re.sub(r"\n#### Sample transactions[\s\S]*?(?=\n### |\Z)", "", detail_text, flags=re.MULTILINE)
+            total_len = len(system_text) + len(detail_text)
+            if total_len <= self.MAX_TOTAL_CONTEXT_CHARS:
+                return system_text, detail_text
+
+        minimal_sections = {
+            "needs_data": False,
+            "expense_scope": "overview",
+            "context_profile": "light",
+            "queries": [],
+        }
+        minimal_summary = self._compose_system_context(minimal_sections)
+        minimal_context = SYSTEM_PROMPT if not minimal_summary else f"{SYSTEM_PROMPT}\n\n{minimal_summary}"
+        if len(minimal_context) > self.MAX_SYSTEM_CONTEXT_CHARS:
+            minimal_context = minimal_context[: self.MAX_SYSTEM_CONTEXT_CHARS] + "\n\n[System summary truncated]"
+        system_text = minimal_context
+
+        if len(system_text) + len(detail_text) > self.MAX_TOTAL_CONTEXT_CHARS:
+            allowed_detail = max(0, self.MAX_TOTAL_CONTEXT_CHARS - len(system_text))
+            if allowed_detail == 0:
+                detail_text = ""
+            else:
+                detail_text = self._degrade_detail_block(detail_text, allowed_detail)
+
+        return system_text, detail_text
+
+    def _infer_expense_scope(self, user_message: str) -> str:
+        """Эвристика fallback для expense_scope, если роутер не вернул валидного значения."""
+        text = (user_message or "").lower()
+        if any(word in text for word in ["аномал", "скач", "выброс", "нетип", "откл"]):
+            return "anomaly"
+        if any(word in text for word in ["месяц", "месяцам", "динамик", "тренд", "период", "ноябр", "декабр", "январ"]):
+            return "time_trend"
+        if any(word in text for word in ["подписк", "категор", "где трачу", "на что трачу"]):
+            return "category_breakdown"
+        if any(word in text for word in ["транзакц", "чек", "мерчант", "магазин", "детали", "подроб"]):
+            return "merchant_detail"
+        return "overview"
+
+    def _default_context_profile(self, scope: str, needs_data: bool) -> str:
+        """Возвращает глубину контекста по умолчанию."""
+        if not needs_data:
+            return "light"
+        if scope in {"merchant_detail", "anomaly"}:
+            return "deep"
+        if scope in {"category_breakdown", "time_trend"}:
+            return "medium"
+        return "medium"
+
+    def _normalize_router_queries(self, queries: list[dict]) -> list[dict]:
+        """Нормализует и ограничивает router-queries для безопасного исполнения."""
+        allowed_types = {
+            "by_category",
+            "by_period",
+            "by_description",
+            "top_expenses",
+            "top_income",
+            "anomaly_detail",
+        }
+        allowed_sort = {"amount_desc", "date_desc"}
+        normalized: list[dict] = []
+
+        for raw in queries[:2]:
+            if not isinstance(raw, dict):
+                continue
+
+            q_type = str(raw.get("type") or "").strip()
+            if q_type not in allowed_types:
+                continue
+
+            category = self._truncate_text(str(raw.get("category") or "").strip(), 64) or None
+            month = str(raw.get("month") or "").strip()
+            if month and not re.fullmatch(r"\d{4}-\d{2}", month):
+                month = None
+            keyword = self._truncate_text(str(raw.get("keyword") or "").strip(), 64) or None
+
+            try:
+                top_n = int(raw.get("top_n", 20))
+            except Exception:
+                top_n = 20
+            top_n = max(1, min(50, top_n))
+
+            sort_by = str(raw.get("sort_by") or "amount_desc").strip()
+            if sort_by not in allowed_sort:
+                sort_by = "amount_desc"
+
+            normalized.append(
+                {
+                    "type": q_type,
+                    "category": category,
+                    "month": month,
+                    "keyword": keyword,
+                    "top_n": top_n,
+                    "sort_by": sort_by,
+                }
+            )
+
+        return normalized
+
+    def _build_expense_cache(self, df: pd.DataFrame) -> dict[str, Any]:
+        """Готовит лёгкий кэш агрегатов по расходам для ускорения detail-pack."""
+        cache: dict[str, Any] = {
+            "expense_by_category": pd.DataFrame(),
+            "expense_by_month": pd.DataFrame(),
+            "recurring_expenses": pd.DataFrame(),
+        }
+        if df.empty:
+            return cache
+
+        expense_df = df.copy()
+        if "op_type" in expense_df.columns:
+            expense_df = expense_df[expense_df["op_type"] == "расход"]
+        if expense_df.empty:
+            return cache
+
+        if "category" in expense_df.columns and "amount" in expense_df.columns:
+            cache["expense_by_category"] = (
+                expense_df.groupby("category", dropna=False)["amount"]
+                .agg(["sum", "count", "mean"])
+                .sort_values("sum", ascending=False)
+                .reset_index()
+            )
+
+        if "date" in expense_df.columns and "amount" in expense_df.columns:
+            work = expense_df.copy()
+            work["month"] = pd.to_datetime(work["date"], errors="coerce").dt.to_period("M").astype(str)
+            cache["expense_by_month"] = (
+                work.groupby("month", dropna=False)["amount"]
+                .agg(["sum", "count", "mean"])
+                .sort_values("sum", ascending=False)
+                .reset_index()
+            )
+
+        if "description" in expense_df.columns and "amount" in expense_df.columns:
+            work = expense_df.copy()
+            work["description"] = work["description"].astype(str).str.strip()
+            recurring = (
+                work.groupby("description", dropna=False)["amount"]
+                .agg(total_amount="sum", count="count", avg_amount="mean")
+                .sort_values(["count", "total_amount"], ascending=[False, False])
+                .reset_index()
+            )
+            cache["recurring_expenses"] = recurring[recurring["count"] >= 2]
+
+        return cache
+
+    def _truncate_text(self, text: str, limit: int) -> str:
+        """Обрезает длинный текст для экономии контекста."""
+        clean = str(text or "").replace("\n", " ").strip()
+        if len(clean) <= limit:
+            return clean
+        return clean[: max(0, limit - 1)] + "…"
+
     def _load_env_if_needed(self) -> None:
         """Подгружает OPENAI_API_KEY из .env, если переменная окружения не установлена."""
         if os.getenv("OPENAI_API_KEY"):
@@ -1554,6 +1882,115 @@ Return ONLY valid JSON, no explanations, no markdown:
             return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
         except Exception:
             return str(payload)
+
+    def _create_chat_completion(self, **kwargs):
+        """
+        Унифицированный вызов Chat Completions с авто-совместимостью по лимиту токенов.
+
+        Некоторые модели (например, gpt-5-mini) принимают `max_completion_tokens`,
+        а часть старых моделей использует `max_tokens`.
+        """
+        request_kwargs = self._apply_model_compat(dict(kwargs))
+        seen_signatures: set[tuple[tuple[str, str], ...]] = set()
+
+        for _ in range(4):
+            signature = tuple(sorted((k, repr(v)) for k, v in request_kwargs.items()))
+            if signature in seen_signatures:
+                break
+            seen_signatures.add(signature)
+            try:
+                return self.client.chat.completions.create(**request_kwargs)
+            except BadRequestError as exc:
+                fallback_kwargs = self._adapt_request_for_known_compat(request_kwargs, exc)
+                if fallback_kwargs is None:
+                    raise
+                request_kwargs = fallback_kwargs
+
+        return self.client.chat.completions.create(**request_kwargs)
+
+    def _adapt_request_for_known_compat(self, request_kwargs: dict, exc: BadRequestError) -> dict | None:
+        """
+        Адаптирует параметры запроса под ограничения модели:
+        - max_tokens <-> max_completion_tokens
+        - удаление temperature, если модель принимает только default.
+        """
+        error_text = str(exc).lower()
+        fallback_kwargs = dict(request_kwargs)
+        model_name = str(fallback_kwargs.get("model") or self.model)
+
+        unsupported_param = "unsupported parameter" in error_text
+        mentions_max_tokens = "max_tokens" in error_text
+        mentions_max_completion = "max_completion_tokens" in error_text
+        if unsupported_param and (mentions_max_tokens or mentions_max_completion):
+            if "max_tokens" in fallback_kwargs:
+                self._remember_model_compat(model_name, token_param="max_completion_tokens")
+                fallback_kwargs = self._apply_model_compat(fallback_kwargs)
+                logger.warning(
+                    "[API][OpenAI] model=%s: max_tokens не поддерживается, повторяю с max_completion_tokens",
+                    fallback_kwargs.get("model", self.model),
+                )
+                return fallback_kwargs
+            if "max_completion_tokens" in fallback_kwargs:
+                self._remember_model_compat(model_name, token_param="max_tokens")
+                fallback_kwargs = self._apply_model_compat(fallback_kwargs)
+                logger.warning(
+                    "[API][OpenAI] model=%s: max_completion_tokens не поддерживается, повторяю с max_tokens",
+                    fallback_kwargs.get("model", self.model),
+                )
+                return fallback_kwargs
+
+        unsupported_value = "unsupported value" in error_text
+        temperature_issue = "temperature" in error_text
+        if unsupported_value and temperature_issue and "temperature" in fallback_kwargs:
+            self._remember_model_compat(model_name, drop_temperature=True)
+            fallback_kwargs = self._apply_model_compat(fallback_kwargs)
+            logger.warning(
+                "[API][OpenAI] model=%s: temperature не поддерживается, повторяю с параметром по умолчанию",
+                fallback_kwargs.get("model", self.model),
+            )
+            return fallback_kwargs
+
+        return None
+
+    def _apply_model_compat(self, request_kwargs: dict) -> dict:
+        """Применяет известные ограничения модели до отправки запроса."""
+        adjusted = dict(request_kwargs)
+        model_name = str(adjusted.get("model") or self.model)
+
+        profile: dict[str, Any] = {}
+        preset = self.MODEL_COMPAT_PRESETS.get(model_name)
+        if isinstance(preset, dict):
+            profile.update(preset)
+        cached = self._model_compat_overrides.get(model_name)
+        if isinstance(cached, dict):
+            profile.update(cached)
+
+        token_param = profile.get("token_param")
+        if token_param == "max_completion_tokens" and "max_tokens" in adjusted and "max_completion_tokens" not in adjusted:
+            adjusted["max_completion_tokens"] = adjusted.pop("max_tokens")
+        elif token_param == "max_tokens" and "max_completion_tokens" in adjusted and "max_tokens" not in adjusted:
+            adjusted["max_tokens"] = adjusted.pop("max_completion_tokens")
+
+        if profile.get("drop_temperature"):
+            adjusted.pop("temperature", None)
+
+        return adjusted
+
+    def _remember_model_compat(
+        self,
+        model_name: str,
+        *,
+        token_param: str | None = None,
+        drop_temperature: bool | None = None,
+    ) -> None:
+        """Запоминает обнаруженные ограничения модели, чтобы не ретраить на каждом запросе."""
+        if not model_name:
+            return
+        profile = self._model_compat_overrides.setdefault(model_name, {})
+        if token_param in {"max_tokens", "max_completion_tokens"}:
+            profile["token_param"] = token_param
+        if drop_temperature is True:
+            profile["drop_temperature"] = True
 
     def _sanitize_reply_text(self, text: str) -> str:
         """Удаляет markdown-heading маркеры и нормализует формат ответа."""

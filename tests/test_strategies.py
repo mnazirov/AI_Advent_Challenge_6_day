@@ -1,5 +1,5 @@
 """
-Запуск: python test_strategies.py
+Запуск: python tests/test_strategies.py
 Проверяет стратегии управления контекстом и менеджер стратегий.
 """
 
@@ -59,7 +59,7 @@ def test_sticky_facts() -> None:
     context = strategy.build_context(history)
     assert context[0]["role"] == "system"
     assert "USER MEMORY" in context[0]["content"]
-    assert len([m for m in context if m["role"] != "system"]) == strategy.RECENT_N
+    assert len([m for m in context if m["role"] != "system"]) == min(len(history), strategy.RECENT_N)
 
     dumped = strategy.dump()
     strategy.reset()
@@ -119,8 +119,8 @@ def test_context_strategy_manager() -> None:
     manager = ContextStrategyManager(client=mock_client)
     history = make_history(25)
 
-    assert manager.active == "sliding_window"
-    assert len(manager.build_context(history)) == 10
+    assert manager.active == "sticky_facts"
+    assert len(manager.build_context(history)) == 25
 
     manager.set_strategy("branching")
     manager.strategy.add_message("user", "ветка")
