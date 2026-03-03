@@ -6,7 +6,7 @@
 
 - Загружать CSV (drag&drop или через выбор файла)
 - Автоматически нормализовать колонки и считать сводку
-- Вести чат с контекстной памятью
+- Вести чат с memory layers: short-term / working / long-term
 - Показывать токены/стоимость и заполненность контекстного окна
 - Переключать модель прямо в UI
 - Переключать стратегию управления контекстом через debug-панель
@@ -15,8 +15,10 @@
 ## Текущие дефолты
 
 - Модель по умолчанию: `gpt-5-mini`
-- Стратегия контекста по умолчанию: `sticky_facts`
-- Для `sticky_facts` в контексте сохраняются последние `30` сообщений
+- Runtime по умолчанию: `memory_layers`
+- `Short-term` лимит: последние `30` сообщений
+- `Long-term retrieve`: `top_k=3` релевантных decisions/notes
+- `Long-term` не очищается при `/reset` и `/session/new`
 
 ## Структура проекта
 
@@ -25,11 +27,27 @@ AI_Advent_Challenge_6_day/
 ├── agent.py                # основной агент: CSV + чат + роутинг детализации
 ├── app.py                  # Flask API и веб-роуты
 ├── context_strategies.py   # стратегии контекста (sliding, sticky, branching, compression)
+├── llm/
+│   ├── client.py           # интерфейс LLMClient и унифицированные типы ответа
+│   ├── openai_client.py    # реализация OpenAI + model-compat
+│   └── mock_client.py      # mock-клиент для тестов
+├── memory/
+│   ├── manager.py          # фасад memory layers
+│   ├── short_term.py       # short-term память по session_id
+│   ├── working.py          # рабочая память задачи + state machine
+│   ├── long_term.py        # долгосрочная память profile/decisions/notes
+│   ├── router.py           # write policy (memory routing)
+│   ├── prompt_builder.py   # сборка prompt по слоям
+│   └── models.py           # модели памяти
 ├── storage.py              # SQLite-хранилище сессий/сообщений
+├── scripts/
+│   └── demo_memory_layers.py
 ├── templates/
 │   └── index.html          # интерфейс (HTML/CSS/JS)
 ├── tests/
 │   ├── test_agent_expense_context.py
+│   ├── test_llm_client.py
+│   ├── test_memory_layers.py
 │   ├── test_normalize.py
 │   ├── test_storage.py
 │   └── test_strategies.py
@@ -150,9 +168,56 @@ Content-Type: application/json
 ## Контекстные стратегии
 
 - `sliding_window` — последние N сообщений
-- `sticky_facts` — факты + последние N сообщений (дефолт, N=30)
+- `sticky_facts` — факты + последние N сообщений (legacy/debug)
 - `branching` — ветки диалога
 - `history_compression` — summary + последние N
+
+## Memory Layers
+
+### Слои памяти
+
+1. `Short-term memory`  
+   Хранит только последние сообщения текущей сессии (`role`, `content`, `timestamp`) с лимитом `N`.  
+   Политика retention: при каждом `append` выполняется pruning по `session_id` (в таблице short-term остаются только последние `N` записей).
+2. `Working memory`  
+   Хранит `TaskContext` текущей задачи: `task_id`, `goal`, `state`, `plan`, `current_step`, `done_steps`, `open_questions`, `artifacts`, `vars`.
+3. `Long-term memory`  
+   Хранит устойчивые данные между сессиями:
+   - `Profile` (style/constraints/context)
+   - `Decisions`
+   - `Notes`
+
+### Memory Router (write policy)
+
+- Long-term записывается только из `source=user` (источник истины).
+- Для `source=assistant` long-term запись идёт только в `pending`; применение только после явного подтверждения пользователя: `ПОДТВЕРЖДАЮ ПАМЯТЬ #<id>`.
+- В `long_term.profile` записываются только устойчивые инструкции (например, «всегда…», «с этого момента…», «не используй…»).
+- В `long_term.decision` записываются только явные решения («решили…», «используем…», «стандарт…»).
+- В `long_term.note` записываются только устойчивые заметки из user-ввода; `ttl_days` по умолчанию `90`.
+- В `working` записываются требования/изменения текущей задачи («требование…», «эндпоинт…», «добавь шаг…»).
+- Не записываются в long-term разовые детали, предположения модели и неподтверждённые факты.
+- На каждом ходе пишется лог: `[MEMORY_WRITE] layer=... keys=...`.
+
+### Memory Reader (read policy)
+
+- `Long-term`: на каждом ходе выполняется retrieve по запросу, в prompt добавляется компактный `[PROFILE]` + top-k (`3`) релевантных `[DECISIONS]`/`[NOTES]`.
+- `Working`: если есть активная задача, всегда добавляется `TaskContext`.
+- `Short-term`: всегда читаются последние `N` сообщений из short-term таблицы (already pruned).
+- Логи чтения:
+  - `[MEMORY_READ] layer=long_term hits=<n> ids=[...] reason=<match/score>`
+  - `[MEMORY_READ] layer=working present=<true/false>`
+  - `[MEMORY_READ] layer=short_term turns=<n>`
+
+### Prompt Builder
+
+Порядок сборки prompt:
+1. `SYSTEM INSTRUCTIONS`
+2. `LONG-TERM`
+3. `WORKING`
+4. `SHORT-TERM`
+5. `USER QUERY`
+
+При `state=PLANNING` агент блокирует запросы вида «сразу код» до перехода в `EXECUTION`.
 
 ## Передача данных о расходах
 
@@ -164,9 +229,57 @@ Content-Type: application/json
   - короткий sample транзакций (только для `deep`)
 - Для расходных detail-запросов применяется фильтр `op_type == "расход"`
 - Ограничения контекста:
-  - `MAX_DETAIL_ROWS = 12`
-  - `MAX_DETAIL_CHARS = 3500`
-  - `MAX_SYSTEM_CONTEXT_CHARS = 9000`
+  - `MAX_DETAIL_ROWS = 24`
+  - `MAX_DETAIL_CHARS = 7000`
+  - `MAX_SYSTEM_CONTEXT_CHARS = 18000`
+
+## Хранилище памяти (SQLite)
+
+Новые таблицы:
+- `memory_short_term_messages`
+- `memory_working_tasks`
+- `memory_longterm_profile`
+- `memory_longterm_decisions`
+- `memory_longterm_notes`
+- `memory_longterm_pending` (для assistant-proposed long-term записей, требующих подтверждения)
+
+Разделение:
+- `short-term` и `working` — по `session_id`
+- `long-term` — по `user_id` (между сессиями)
+- Полная debug-история диалога хранится отдельно в `messages` и не участвует в short-term retention.
+
+## Demo для видео
+
+Команда (real OpenAI):
+
+```bash
+PYTHONPATH=. python3 -m scripts.demo_memory_layers --real-llm
+```
+
+Требуется переменная окружения:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+### Video checklist
+
+1. Запустить demo-скрипт и показать `SCENE A`:
+   - short-term окно переполняется
+   - ранние реплики исчезают из контекста
+2. Показать `SCENE B`:
+   - `PLANNING` блокирует «сразу финальный план бюджета»
+   - после перехода в `EXECUTION` пошаговый финансовый план разрешается
+3. Показать `SCENE C`:
+   - записываются long-term правила/решения
+   - после «рестарта» агент отвечает с учётом сохранённой долгосрочной памяти
+4. Показать блок `[DEMO CONCLUSIONS]` в конце демо.
+5. В кадре показать:
+   - `Short-term snapshot`: последние N turn’ов (`role + content[:80]`)
+   - `Working snapshot`: `state`, `plan`, `current_step`, `done_steps`, `open_questions`
+   - `Long-term snapshot`: profile + top-k decisions/notes (`title + tags`)
+   - `Prompt preview`: `[PROFILE]`, `[DECISIONS]`, `[WORKING]`, `[SHORT_TERM]`
+   - логи `[MEMORY_WRITE]`
 
 ## Тесты
 
@@ -182,6 +295,8 @@ PYTHONPATH=. python3 -m pytest tests -q
 PYTHONPATH=. python3 tests/test_normalize.py
 PYTHONPATH=. python3 tests/test_storage.py
 PYTHONPATH=. python3 tests/test_strategies.py
+PYTHONPATH=. python3 tests/test_memory_layers.py
+PYTHONPATH=. python3 tests/test_llm_client.py
 ```
 
 ## Хранилище данных

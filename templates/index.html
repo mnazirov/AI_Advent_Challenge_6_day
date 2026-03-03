@@ -618,6 +618,178 @@ body::before {
   scrollbar-width: thin;
 }
 
+/* ── Memory Layers ── */
+.dd-memory-wrap {
+  margin: 4px 20px 12px;
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.dd-memory-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dd-memory-title {
+  font-size: 0.7rem; font-weight: 600; color: var(--muted2);
+}
+
+.dd-memory-tabs {
+  display: flex; gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.dd-memory-tab {
+  font-size: 0.68rem; font-family: var(--sans);
+  background: transparent; border: none;
+  border-radius: 6px 6px 0 0;
+  padding: 6px 12px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+
+.dd-memory-tab:hover { color: var(--text); background: var(--s3); }
+
+.dd-memory-tab.active {
+  color: var(--gold);
+  background: rgba(232,201,109,0.08);
+  border-bottom: 1px solid var(--s2);
+  margin-bottom: -1px;
+}
+
+.dd-memory-panels {
+  padding: 10px 12px 12px;
+  min-height: 80px;
+}
+
+.dd-memory-panel {
+  display: none;
+}
+
+.dd-memory-panel.active {
+  display: block;
+}
+
+.dd-memory-list {
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+.dd-memory-item {
+  background: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.7rem;
+}
+
+.dd-memory-item-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 4px;
+}
+
+.dd-memory-item-role {
+  font-weight: 600; color: var(--gold-dim);
+}
+
+.dd-memory-item-ts {
+  font-family: var(--mono); font-size: 0.62rem; color: var(--muted);
+}
+
+.dd-memory-item-preview {
+  color: var(--muted2);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dd-memory-item-full {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dd-memory-expand-btn {
+  font-size: 0.62rem;
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: var(--muted);
+  cursor: pointer;
+  margin-left: auto;
+  transition: color 0.14s, border-color 0.14s;
+}
+
+.dd-memory-expand-btn:hover {
+  color: var(--gold-dim);
+  border-color: rgba(232,201,109,0.35);
+}
+
+.dd-memory-working-content,
+.dd-memory-longterm-content {
+  font-size: 0.7rem;
+}
+
+.dd-memory-working-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.dd-memory-kv-row {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.68rem;
+}
+
+.dd-memory-kv-row:last-child { border-bottom: none; }
+
+.dd-memory-kv-label { color: var(--muted); }
+.dd-memory-kv-val {
+  font-family: var(--mono);
+  color: var(--muted2);
+  text-align: right;
+  max-width: 70%;
+  word-break: break-word;
+}
+
+.dd-memory-lt-card {
+  background: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 0.68rem;
+}
+
+.dd-memory-lt-card:last-child { margin-bottom: 0; }
+
+.dd-memory-lt-card-meta {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 4px;
+}
+
+.dd-memory-lt-card-tags {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+
+.dd-memory-lt-tag {
+  font-size: 0.6rem;
+  background: rgba(232,201,109,0.12);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--gold-dim);
+}
+
 /* Уведомление о смене ветки в чате */
 .branch-switch-notice {
   text-align: center; padding: 4px 14px;
@@ -1632,6 +1804,31 @@ textarea::placeholder { color: var(--muted); }
 
         </div>
 
+        <!-- ── Memory Layers ── -->
+        <div class="dd-section-head">Слои памяти</div>
+        <div class="dd-memory-wrap">
+          <div class="dd-memory-header">
+            <span class="dd-memory-title">Краткосрочная / Рабочая / Долговременная</span>
+            <button type="button" class="dd-micro-btn" id="memoryLayersRefresh" onclick="DebugMenu.refreshMemoryLayers()">Refresh</button>
+          </div>
+          <div class="dd-memory-tabs">
+            <button type="button" class="dd-memory-tab active" data-tab="short_term">Краткосрочная</button>
+            <button type="button" class="dd-memory-tab" data-tab="working">Рабочая</button>
+            <button type="button" class="dd-memory-tab" data-tab="long_term">Долговременная</button>
+          </div>
+          <div class="dd-memory-panels">
+            <div class="dd-memory-panel active" id="memoryPanelShortTerm">
+              <div class="dd-memory-list" id="memoryShortTermList"></div>
+            </div>
+            <div class="dd-memory-panel" id="memoryPanelWorking">
+              <div class="dd-memory-working-content" id="memoryWorkingContent"></div>
+            </div>
+            <div class="dd-memory-panel" id="memoryPanelLongTerm">
+              <div class="dd-memory-longterm-content" id="memoryLongTermContent"></div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -1863,6 +2060,7 @@ textarea::placeholder { color: var(--muted); }
         DebugMenu.updateCtxState(data.ctx_state);
       }
       setLoaderStep('data', 'done');
+      DebugMenu.refreshMemoryLayers();
 
       box.scrollTop = box.scrollHeight;
     } catch (err) {
@@ -2003,6 +2201,9 @@ textarea::placeholder { color: var(--muted); }
     };
 
     let _drawerOpen = false;
+    let _memoryLayersTab = 'short_term';
+    let _memoryLayersCache = null;
+    let _memoryLayersExpanded = new Set();
 
     // ── Публичный API ──
 
@@ -2031,6 +2232,179 @@ textarea::placeholder { color: var(--muted); }
       const storedStrategy = localStorage.getItem(LS.STRATEGY) || 'sticky_facts';
       _applyStrategyUI(storedStrategy);
       _showStrategyPanel(storedStrategy);
+
+      _initMemoryLayersTabs();
+    }
+
+    function _initMemoryLayersTabs() {
+      document.querySelectorAll('.dd-memory-tab').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const tab = btn.getAttribute('data-tab');
+          if (!tab) return;
+          _memoryLayersTab = tab;
+          document.querySelectorAll('.dd-memory-tab').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          document.querySelectorAll('.dd-memory-panel').forEach((p) => p.classList.remove('active'));
+          const panel = document.getElementById('memoryPanel' + (tab === 'short_term' ? 'ShortTerm' : tab === 'working' ? 'Working' : 'LongTerm'));
+          if (panel) panel.classList.add('active');
+          if (_memoryLayersCache) updateMemoryLayers(_memoryLayersCache);
+        });
+      });
+    }
+
+    function refreshMemoryLayers(query) {
+      const url = new URL('/debug/memory-layers', window.location.origin);
+      if (query != null && String(query).trim() !== '') url.searchParams.set('q', query);
+      fetch(url.toString())
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.error) {
+            const list = document.getElementById('memoryShortTermList');
+            if (list) list.innerHTML = '<div class="dd-memory-working-empty">Ошибка: ' + esc(data.error) + '</div>';
+            return;
+          }
+          _memoryLayersCache = data;
+          updateMemoryLayers(data);
+        })
+        .catch((err) => {
+          const list = document.getElementById('memoryShortTermList');
+          if (list) list.innerHTML = '<div class="dd-memory-working-empty">Не удалось загрузить: ' + esc(err.message) + '</div>';
+        });
+    }
+
+    function updateMemoryLayers(snapshot) {
+      if (!snapshot) return;
+      _memoryLayersCache = snapshot;
+      _renderShortTerm(snapshot.short_term);
+      _renderWorking(snapshot.working);
+      _renderLongTerm(snapshot.long_term);
+    }
+
+    function _renderShortTerm(data) {
+      const list = document.getElementById('memoryShortTermList');
+      if (!list) return;
+      if (!data || !Array.isArray(data.turns)) {
+        list.innerHTML = '<div class="dd-memory-working-empty">Нет данных</div>';
+        return;
+      }
+      const limitN = data.limit_n || 30;
+      const turns = data.turns || [];
+      if (turns.length === 0) {
+        list.innerHTML = '<div class="dd-memory-working-empty">Сообщений нет (лимит ' + limitN + ')</div>';
+        return;
+      }
+      list.innerHTML = turns.map((t) => {
+        const id = 'st-' + (t.id != null ? t.id : Math.random().toString(36).slice(2));
+        const expanded = _memoryLayersExpanded.has(id);
+        const text = expanded ? t.full : t.preview;
+        const btnLabel = expanded ? 'Свернуть' : 'Развернуть';
+        return (
+          '<div class="dd-memory-item" data-id="' + esc(id) + '">' +
+            '<div class="dd-memory-item-meta">' +
+              '<span class="dd-memory-item-role">' + esc(t.role) + '</span>' +
+              '<span class="dd-memory-item-ts">' + esc(t.timestamp || '') + '</span>' +
+              '<button type="button" class="dd-memory-expand-btn" onclick="DebugMenu._toggleExpand(\'' + esc(id) + '\')">' + btnLabel + '</button>' +
+            '</div>' +
+            '<div class="dd-memory-item-preview">' + esc(text) + (t.full_truncated && expanded ? ' …' : '') + '</div>' +
+          '</div>'
+        );
+      }).join('');
+    }
+
+    function _renderWorking(data) {
+      const container = document.getElementById('memoryWorkingContent');
+      if (!container) return;
+      if (!data) {
+        container.innerHTML = '<div class="dd-memory-working-empty">Нет данных</div>';
+        return;
+      }
+      if (!data.present || !data.task) {
+        container.innerHTML = '<div class="dd-memory-working-empty">Активной задачи нет</div>';
+        return;
+      }
+      const t = data.task;
+      let html = '';
+      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">state</span><span class="dd-memory-kv-val">' + esc(t.state || '') + '</span></div>';
+      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">task_id</span><span class="dd-memory-kv-val">' + esc(t.task_id || '') + '</span></div>';
+      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">goal</span><span class="dd-memory-kv-val">' + esc(t.goal || '') + '</span></div>';
+      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">current_step</span><span class="dd-memory-kv-val">' + esc(t.current_step || '') + '</span></div>';
+      if (Array.isArray(t.plan) && t.plan.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">plan</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.plan)) + '</span></div>';
+      }
+      if (Array.isArray(t.done_steps) && t.done_steps.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">done_steps</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.done_steps)) + '</span></div>';
+      }
+      if (Array.isArray(t.open_questions) && t.open_questions.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">open_questions</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.open_questions)) + '</span></div>';
+      }
+      if (Array.isArray(t.artifacts) && t.artifacts.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">artifacts</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.artifacts)) + '</span></div>';
+      }
+      if (t.vars && Object.keys(t.vars).length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">vars</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.vars)) + '</span></div>';
+      }
+      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">updated_at</span><span class="dd-memory-kv-val">' + esc(t.updated_at || '') + '</span></div>';
+      container.innerHTML = html;
+    }
+
+    function _renderLongTerm(data) {
+      const container = document.getElementById('memoryLongTermContent');
+      if (!container) return;
+      if (!data) {
+        container.innerHTML = '<div class="dd-memory-working-empty">Нет данных</div>';
+        return;
+      }
+      let html = '';
+      const profile = data.profile || {};
+      html += '<div class="dd-memory-lt-card"><div class="dd-memory-lt-card-meta"><span class="dd-memory-item-role">Профиль</span></div>';
+      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">style</span><span class="dd-memory-kv-val">' + esc(profile.style || '') + '</span></div>';
+      if (Array.isArray(profile.constraints) && profile.constraints.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">constraints</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(profile.constraints)) + '</span></div>';
+      }
+      if (Array.isArray(profile.context) && profile.context.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">context</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(profile.context)) + '</span></div>';
+      }
+      if (Array.isArray(profile.tags) && profile.tags.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">tags</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(profile.tags)) + '</span></div>';
+      }
+      html += '</div>';
+      const decisions = data.decisions_top_k || [];
+      decisions.forEach((d) => {
+        const id = 'lt-d-' + (d.id != null ? d.id : Math.random().toString(36).slice(2));
+        const expanded = _memoryLayersExpanded.has(id);
+        const text = expanded ? d.full : d.preview;
+        const btnLabel = expanded ? 'Свернуть' : 'Развернуть';
+        const tagsHtml = (d.tags || []).map((tag) => '<span class="dd-memory-lt-tag">' + esc(tag) + '</span>').join('');
+        html += '<div class="dd-memory-lt-card" data-id="' + esc(id) + '">';
+        html += '<div class="dd-memory-item-meta"><span class="dd-memory-item-role">Решение</span><span class="dd-memory-item-ts">' + esc(d.created_at || '') + '</span>';
+        html += '<button type="button" class="dd-memory-expand-btn" onclick="DebugMenu._toggleExpand(\'' + esc(id) + '\')">' + btnLabel + '</button></div>';
+        if (tagsHtml) html += '<div class="dd-memory-lt-card-tags">' + tagsHtml + '</div>';
+        html += '<div class="dd-memory-item-preview">' + esc(text) + (d.full_truncated && expanded ? ' …' : '') + '</div></div>';
+      });
+      const notes = data.notes_top_k || [];
+      notes.forEach((n) => {
+        const id = 'lt-n-' + (n.id != null ? n.id : Math.random().toString(36).slice(2));
+        const expanded = _memoryLayersExpanded.has(id);
+        const text = expanded ? n.full : n.preview;
+        const btnLabel = expanded ? 'Свернуть' : 'Развернуть';
+        const tagsHtml = (n.tags || []).map((tag) => '<span class="dd-memory-lt-tag">' + esc(tag) + '</span>').join('');
+        html += '<div class="dd-memory-lt-card" data-id="' + esc(id) + '">';
+        html += '<div class="dd-memory-item-meta"><span class="dd-memory-item-role">Заметка</span><span class="dd-memory-item-ts">' + esc(n.created_at || '') + '</span>';
+        html += '<button type="button" class="dd-memory-expand-btn" onclick="DebugMenu._toggleExpand(\'' + esc(id) + '\')">' + btnLabel + '</button></div>';
+        if (tagsHtml) html += '<div class="dd-memory-lt-card-tags">' + tagsHtml + '</div>';
+        html += '<div class="dd-memory-item-preview">' + esc(text) + (n.full_truncated && expanded ? ' …' : '') + '</div></div>';
+      });
+      if (!profile.style && !(profile.constraints && profile.constraints.length) && !(profile.context && profile.context.length) && !decisions.length && !notes.length) {
+        container.innerHTML = '<div class="dd-memory-working-empty">Профиль и записи пусты</div>';
+      } else {
+        container.innerHTML = html;
+      }
+    }
+
+    function _toggleExpand(itemId) {
+      if (_memoryLayersExpanded.has(itemId)) _memoryLayersExpanded.delete(itemId);
+      else _memoryLayersExpanded.add(itemId);
+      if (_memoryLayersCache) updateMemoryLayers(_memoryLayersCache);
     }
 
     function updateCtxState(data) {
@@ -2345,6 +2719,9 @@ textarea::placeholder { color: var(--muted); }
       createCheckpoint,
       forkBranch,
       switchBranch,
+      refreshMemoryLayers,
+      updateMemoryLayers,
+      _toggleExpand,
     };
   })();
 
@@ -2690,6 +3067,7 @@ textarea::placeholder { color: var(--muted); }
       } else if (data && data.ctx_state) {
         DebugMenu.updateCtxState(data.ctx_state);
       }
+      if (data) DebugMenu.refreshMemoryLayers();
     } catch (err) {
       removeTyping();
       console.error('[CHAT] request failed', err);

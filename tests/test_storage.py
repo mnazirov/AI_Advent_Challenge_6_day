@@ -14,9 +14,17 @@ storage.UPLOADS_DIR = Path(tempfile.mkdtemp())
 
 from storage import (
     clear_session_messages,
+    clear_session_memory_layers,
     create_session,
+    ensure_session,
     init_db,
     load_session,
+    memory_add_longterm_decision,
+    memory_load_longterm_profile,
+    memory_load_short_term_messages,
+    memory_load_working_task,
+    memory_save_working_task,
+    memory_upsert_longterm_profile,
     save_csv_meta,
     save_ctx_state,
     save_message,
@@ -58,6 +66,43 @@ assert data is not None
 assert data["ctx_state"]["active"] == "sticky_facts"
 print("✅ Тест 3.1: save_ctx_state + load_session ctx_state")
 
+# Тест 3.2: short-term + working + long-term memory storage
+from datetime import datetime
+
+from storage import memory_append_short_term_message
+
+memory_append_short_term_message(sid, "user", "msg1", datetime.utcnow().isoformat())
+memory_append_short_term_message(sid, "assistant", "msg2", datetime.utcnow().isoformat())
+st = memory_load_short_term_messages(sid)
+assert len(st) == 2
+
+memory_save_working_task(
+    session_id=sid,
+    task_id="task-1",
+    goal="Сделать демо",
+    state="PLANNING",
+    plan=["Шаг 1"],
+    current_step="Шаг 1",
+    done_steps=[],
+    open_questions=["Q1"],
+    artifacts=[],
+    vars_data={"k": "v"},
+)
+wk = memory_load_working_task(sid)
+assert wk is not None and wk["task_id"] == "task-1"
+
+memory_upsert_longterm_profile(
+    user_id="default_local_user",
+    style="concise",
+    constraints=["ru"],
+    context=["ctx"],
+    tags=["profile"],
+)
+memory_add_longterm_decision(user_id="default_local_user", text="Используем Flask", tags=["decision"])
+profile = memory_load_longterm_profile("default_local_user")
+assert profile is not None and profile["style"] == "concise"
+print("✅ Тест 3.2: memory layers storage")
+
 # Тест 4: очистка истории
 clear_session_messages(sid)
 data = load_session(sid)
@@ -65,12 +110,22 @@ assert data is not None
 assert len(data["messages"]) == 0
 assert data["filename"] == "test.csv"  # метаданные сохранились
 assert data["ctx_state"] == {}
+assert len(memory_load_short_term_messages(sid)) == 0
+assert memory_load_working_task(sid) is None
 print("✅ Тест 4: clear_session_messages (сообщения удалены, метаданные сохранены)")
+
+clear_session_memory_layers(sid)
 
 # Тест 5: несуществующая сессия
 data = load_session("non-existent-id")
 assert data is None
 print("✅ Тест 5: load_session несуществующей сессии → None")
+
+# Тест 6: ensure_session создаёт сессию при необходимости
+ensured_id = "test-ensured-session"
+ensure_session(ensured_id)
+assert session_exists(ensured_id)
+print("✅ Тест 6: ensure_session")
 
 # Cleanup
 storage.DB_PATH.unlink(missing_ok=True)

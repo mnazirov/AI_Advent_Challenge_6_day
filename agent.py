@@ -9,14 +9,19 @@ from time import perf_counter
 from typing import Any
 
 import pandas as pd
-from openai import BadRequestError, OpenAI
 
 from context_strategies import ContextStrategyManager
+from llm import OpenAILLMClient
+from memory import MemoryManager
+from storage import ensure_session
 
 SYSTEM_PROMPT = """You are an AI financial advisor focused on personal finance.
 You are not a broker and you do not provide legal or tax advice.
 Use exact numbers from the provided data. Do not invent figures.
 Final user-facing reply must be in Russian only.
+
+Keep replies concise so they fit within token limits: prefer short, focused answers; avoid long enumerations, repetition, or unnecessary preamble. If the user needs more detail, they can ask to continue.
+
 Never output the heading or label "PLANNING".
 Do not output any service tags or markers like [PLAN], [ANALYTICS], [DIAGNOSIS], [ADVISORY], [CLARIFICATION].
 
@@ -86,10 +91,7 @@ class FinancialAgent:
     MAX_DETAIL_CHARS = 7000
     MAX_SYSTEM_CONTEXT_CHARS = 18000
     MAX_TOTAL_CONTEXT_CHARS = MAX_SYSTEM_CONTEXT_CHARS + MAX_DETAIL_CHARS
-    MODEL_COMPAT_PRESETS = {
-        # GPT-5-mini требует max_completion_tokens и default temperature.
-        "gpt-5-mini": {"token_param": "max_completion_tokens", "drop_temperature": True},
-    }
+    DEFAULT_USER_ID = "default_local_user"
     COST_PER_1M = {
         "gpt-5.2": {"input": 1.75, "output": 14.00},
         "gpt-5.1": {"input": 1.25, "output": 10.00},
@@ -113,7 +115,7 @@ class FinancialAgent:
     def __init__(self, model: str | None = None):
         """Инициализирует клиент OpenAI и состояние сессии."""
         self._load_env_if_needed()
-        self.client = OpenAI()
+        self.llm_client = OpenAILLMClient()
         requested_model = (model or os.getenv("OPENAI_MODEL") or self.DEFAULT_MODEL).strip()
         try:
             self.model = self._validate_model(requested_model)
@@ -125,14 +127,16 @@ class FinancialAgent:
                 self.model,
             )
         self.conversation_history: list[dict[str, str]] = []
-        self.ctx = ContextStrategyManager(client=self.client, model=self.model)
+        self.ctx = ContextStrategyManager(client=self.llm_client, model=self.model)
+        self.memory = MemoryManager(short_term_limit=30)
         self.csv_summary: str | None = None
         self.summary_sections: dict[str, str] = {}
         self.expense_cache: dict[str, Any] = {}
         self.df: pd.DataFrame | None = None
         self.last_token_stats: dict[str, Any] | None = None
         self.last_schema_token_stats: dict[str, Any] | None = None
-        self._model_compat_overrides: dict[str, dict[str, Any]] = {}
+        self.last_memory_stats: dict[str, Any] | None = None
+        self.last_prompt_preview: dict[str, str] | None = None
         self._last_encoding: str | None = None
         logger.info("[INIT] FinancialAgent инициализирован model=%s", self.model)
 
@@ -249,7 +253,7 @@ class FinancialAgent:
             logger.exception("[CSV] Ошибка обработки файла: %s", exc)
             return {"success": False, "error": str(exc)}
 
-    def chat(self, user_message: str) -> str:
+    def chat(self, user_message: str, session_id: str | None = None, user_id: str | None = None) -> str:
         """
         Основной метод диалога с Router Agent для динамического обогащения контекста.
 
@@ -261,6 +265,9 @@ class FinancialAgent:
         """
         t_start = perf_counter()
 
+        current_session_id = str(session_id or "default_session")
+        current_user_id = str(user_id or self.DEFAULT_USER_ID)
+        ensure_session(current_session_id)
         detail_block = ""
         route_decision = {
             "needs_data": False,
@@ -282,58 +289,95 @@ class FinancialAgent:
         system_content, detail_block = self._fit_context_budget(system_content, detail_block, route_decision)
 
         if detail_block:
-            enriched_message = (
+            enriched_message_for_model = (
                 f"{user_message}\n\n"
                 "[DETAILED DATA FOR RESPONSE]\n"
                 "Below are concrete transactions from the user's dataset related to this question:\n\n"
                 f"{detail_block}"
             )
         else:
-            enriched_message = user_message
+            enriched_message_for_model = user_message
 
-        if self.ctx.active == "sticky_facts":
-            self.ctx.strategy.update_facts(user_message, self.conversation_history)
+        self.memory.route_user_message(
+            session_id=current_session_id,
+            user_id=current_user_id,
+            user_message=user_message,
+        )
+        gate_message = self.memory.enforce_planning_gate(
+            session_id=current_session_id,
+            user_message=user_message,
+        )
+        if gate_message:
+            assistant_message = self._sanitize_reply_text(gate_message)
+            self.memory.append_turn(
+                session_id=current_session_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+            )
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": assistant_message})
+            latency = round((perf_counter() - t_start) * 1000)
+            self.last_memory_stats = self.memory.stats(session_id=current_session_id, user_id=current_user_id)
+            self.last_token_stats = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+                "latency_ms": int(latency),
+                "scope": "chat",
+                "strategy": "memory_layers",
+                "ctx_stats": self.ctx.stats(self.conversation_history),
+                "memory_stats": self.last_memory_stats,
+                "finish_reason": "state_blocked",
+            }
+            logger.info("[CHAT][STATE_GUARD] blocked_in_planning session=%s", current_session_id)
+            return assistant_message
 
-        if self.ctx.active == "branching":
-            self.ctx.strategy.add_message("user", enriched_message)
-        else:
-            self.conversation_history.append({"role": "user", "content": enriched_message})
-
-        optimized_history = self.ctx.build_context(self.conversation_history)
-        messages = [{"role": "system", "content": system_content}] + optimized_history
+        messages, prompt_preview, read_meta = self.memory.build_messages(
+            session_id=current_session_id,
+            user_id=current_user_id,
+            system_instructions=system_content,
+            data_context="",
+            user_query=enriched_message_for_model,
+        )
+        self.last_prompt_preview = prompt_preview
 
         enriched_flag = bool(detail_block)
+        current_memory_stats = self.memory.stats(session_id=current_session_id, user_id=current_user_id)
         request_payload = {
             "scope": "chat",
             "model": self.model,
             "messages_count": len(messages),
             "temperature": 0.7,
             "enriched": enriched_flag,
-            "strategy": self.ctx.active,
+            "strategy": "memory_layers",
             "expense_scope": route_decision.get("expense_scope"),
             "context_profile": route_decision.get("context_profile"),
             "system_chars": len(system_content),
             "detail_chars": len(detail_block),
+            "session_id": current_session_id,
+            "memory_stats": current_memory_stats,
+            "memory_read": read_meta,
             "messages": messages,
         }
         logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
         logger.info(
-            "[CHAT][HISTORY] stored_messages=%s",
-            len(self.conversation_history),
+            "[CHAT][HISTORY] short_term_messages=%s",
+            len(self.memory.short_term.get_context(current_session_id)),
         )
         logger.info(
             "[CHAT][REQ] model=%s messages_count=%s enriched=%s strategy=%s",
             self.model,
             len(messages),
             enriched_flag,
-            self.ctx.active,
+            "memory_layers",
         )
 
         try:
             response = self._create_chat_completion(
                 model=self.model,
                 messages=messages,
-                max_tokens=2048,
+                max_tokens=4096,
                 temperature=0.7,
             )
         except Exception as exc:
@@ -343,24 +387,40 @@ class FinancialAgent:
                 "messages_count": len(messages),
                 "temperature": 0.7,
                 "enriched": enriched_flag,
-                "strategy": self.ctx.active,
+                "strategy": "memory_layers",
                 "error": str(exc),
             }
             logger.error("[API][OpenAI][Ошибка]\n%s", self._pretty_json(error_payload))
             raise
 
-        assistant_message = self._sanitize_reply_text(response.choices[0].message.content or "")
-        if self.ctx.active == "branching":
-            self.ctx.strategy.add_message("assistant", assistant_message)
-        else:
-            self.conversation_history.append({"role": "assistant", "content": assistant_message})
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        raw_content = response.choices[0].message.content or ""
+        assistant_message = self._sanitize_reply_text(raw_content)
+        if not assistant_message:
+            if finish_reason == "length":
+                assistant_message = (
+                    "Ответ обрезан из-за лимита длины. Попросите «продолжи» или задайте вопрос короче."
+                )
+            else:
+                assistant_message = (
+                    "Не удалось сформировать ответ в текущем лимите генерации. "
+                    "Уточните запрос или попросите ответ короче."
+                )
+        elif finish_reason == "length":
+            assistant_message = assistant_message.rstrip() + "\n\n_Ответ обрезан по длине. Можете попросить продолжить._"
+        self.memory.append_turn(
+            session_id=current_session_id,
+            user_message=user_message,
+            assistant_message=assistant_message,
+        )
+        self.conversation_history.append({"role": "user", "content": user_message})
+        self.conversation_history.append({"role": "assistant", "content": assistant_message})
 
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or 0)
         cost_usd = self._estimate_cost(prompt_tokens, completion_tokens)
-        finish_reason = getattr(response.choices[0], "finish_reason", None)
         latency = round((perf_counter() - t_start) * 1000)
 
         response_payload = {
@@ -376,10 +436,11 @@ class FinancialAgent:
             "latency_ms": latency,
             "cost_usd": cost_usd,
             "enriched": enriched_flag,
-            "strategy": self.ctx.active,
+            "strategy": "memory_layers",
             "assistant_message": assistant_message,
         }
         logger.info("[API][OpenAI][Ответ]\n%s", self._pretty_json(response_payload))
+        self.last_memory_stats = self.memory.stats(session_id=current_session_id, user_id=current_user_id)
         self.last_token_stats = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -387,8 +448,12 @@ class FinancialAgent:
             "cost_usd": float(round(cost_usd, 6)),
             "latency_ms": int(latency),
             "scope": "chat",
-            "strategy": self.ctx.active,
+            "strategy": "memory_layers",
             "ctx_stats": self.ctx.stats(self.conversation_history),
+            "memory_stats": self.last_memory_stats,
+            "memory_read": read_meta,
+            "prompt_preview": self.last_prompt_preview,
+            "finish_reason": finish_reason,
         }
 
         logger.info(
@@ -400,7 +465,7 @@ class FinancialAgent:
             self.model,
             len(messages),
             enriched_flag,
-            self.ctx.active,
+            "memory_layers",
         )
         logger.info("[CHAT][RESP] finish_reason=%s latency_ms=%s", finish_reason, latency)
 
@@ -416,6 +481,20 @@ class FinancialAgent:
         self.ctx.reset_all()
         self.last_token_stats = None
         self.last_schema_token_stats = None
+        self.last_memory_stats = None
+        self.last_prompt_preview = None
+
+    def clear_session_memory(self, session_id: str) -> None:
+        """Очищает short-term и working память конкретной сессии."""
+        self.memory.clear_session(session_id=session_id)
+
+    def restore_memory_session(self, session_id: str, messages: list[dict[str, str]] | None = None) -> None:
+        """
+        Восстанавливает memory-слои сессии без ре-гидрации short-term из persisted history.
+        Short-term контекст живёт только в рамках текущего runtime.
+        """
+        _ = messages  # backward-compatible сигнатура
+        self.memory.short_term.get_context(session_id)
 
     def _route(self, user_message: str) -> dict:
         """
@@ -1884,113 +1963,8 @@ Return ONLY valid JSON, no explanations, no markdown:
             return str(payload)
 
     def _create_chat_completion(self, **kwargs):
-        """
-        Унифицированный вызов Chat Completions с авто-совместимостью по лимиту токенов.
-
-        Некоторые модели (например, gpt-5-mini) принимают `max_completion_tokens`,
-        а часть старых моделей использует `max_tokens`.
-        """
-        request_kwargs = self._apply_model_compat(dict(kwargs))
-        seen_signatures: set[tuple[tuple[str, str], ...]] = set()
-
-        for _ in range(4):
-            signature = tuple(sorted((k, repr(v)) for k, v in request_kwargs.items()))
-            if signature in seen_signatures:
-                break
-            seen_signatures.add(signature)
-            try:
-                return self.client.chat.completions.create(**request_kwargs)
-            except BadRequestError as exc:
-                fallback_kwargs = self._adapt_request_for_known_compat(request_kwargs, exc)
-                if fallback_kwargs is None:
-                    raise
-                request_kwargs = fallback_kwargs
-
-        return self.client.chat.completions.create(**request_kwargs)
-
-    def _adapt_request_for_known_compat(self, request_kwargs: dict, exc: BadRequestError) -> dict | None:
-        """
-        Адаптирует параметры запроса под ограничения модели:
-        - max_tokens <-> max_completion_tokens
-        - удаление temperature, если модель принимает только default.
-        """
-        error_text = str(exc).lower()
-        fallback_kwargs = dict(request_kwargs)
-        model_name = str(fallback_kwargs.get("model") or self.model)
-
-        unsupported_param = "unsupported parameter" in error_text
-        mentions_max_tokens = "max_tokens" in error_text
-        mentions_max_completion = "max_completion_tokens" in error_text
-        if unsupported_param and (mentions_max_tokens or mentions_max_completion):
-            if "max_tokens" in fallback_kwargs:
-                self._remember_model_compat(model_name, token_param="max_completion_tokens")
-                fallback_kwargs = self._apply_model_compat(fallback_kwargs)
-                logger.warning(
-                    "[API][OpenAI] model=%s: max_tokens не поддерживается, повторяю с max_completion_tokens",
-                    fallback_kwargs.get("model", self.model),
-                )
-                return fallback_kwargs
-            if "max_completion_tokens" in fallback_kwargs:
-                self._remember_model_compat(model_name, token_param="max_tokens")
-                fallback_kwargs = self._apply_model_compat(fallback_kwargs)
-                logger.warning(
-                    "[API][OpenAI] model=%s: max_completion_tokens не поддерживается, повторяю с max_tokens",
-                    fallback_kwargs.get("model", self.model),
-                )
-                return fallback_kwargs
-
-        unsupported_value = "unsupported value" in error_text
-        temperature_issue = "temperature" in error_text
-        if unsupported_value and temperature_issue and "temperature" in fallback_kwargs:
-            self._remember_model_compat(model_name, drop_temperature=True)
-            fallback_kwargs = self._apply_model_compat(fallback_kwargs)
-            logger.warning(
-                "[API][OpenAI] model=%s: temperature не поддерживается, повторяю с параметром по умолчанию",
-                fallback_kwargs.get("model", self.model),
-            )
-            return fallback_kwargs
-
-        return None
-
-    def _apply_model_compat(self, request_kwargs: dict) -> dict:
-        """Применяет известные ограничения модели до отправки запроса."""
-        adjusted = dict(request_kwargs)
-        model_name = str(adjusted.get("model") or self.model)
-
-        profile: dict[str, Any] = {}
-        preset = self.MODEL_COMPAT_PRESETS.get(model_name)
-        if isinstance(preset, dict):
-            profile.update(preset)
-        cached = self._model_compat_overrides.get(model_name)
-        if isinstance(cached, dict):
-            profile.update(cached)
-
-        token_param = profile.get("token_param")
-        if token_param == "max_completion_tokens" and "max_tokens" in adjusted and "max_completion_tokens" not in adjusted:
-            adjusted["max_completion_tokens"] = adjusted.pop("max_tokens")
-        elif token_param == "max_tokens" and "max_completion_tokens" in adjusted and "max_tokens" not in adjusted:
-            adjusted["max_tokens"] = adjusted.pop("max_completion_tokens")
-
-        if profile.get("drop_temperature"):
-            adjusted.pop("temperature", None)
-
-        return adjusted
-
-    def _remember_model_compat(
-        self,
-        model_name: str,
-        *,
-        token_param: str | None = None,
-        drop_temperature: bool | None = None,
-    ) -> None:
-        """Запоминает обнаруженные ограничения модели, чтобы не ретраить на каждом запросе."""
-        if not model_name:
-            return
-        profile = self._model_compat_overrides.setdefault(model_name, {})
-        if token_param in {"max_tokens", "max_completion_tokens"}:
-            profile["token_param"] = token_param
-        if drop_temperature is True:
-            profile["drop_temperature"] = True
+        """Единый вызов через абстракцию LLMClient."""
+        return self.llm_client.chat_completion(**kwargs)
 
     def _sanitize_reply_text(self, text: str) -> str:
         """Удаляет markdown-heading маркеры и нормализует формат ответа."""

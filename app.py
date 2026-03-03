@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from uuid import uuid4
 
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -92,6 +93,7 @@ def _build_ctx_state() -> dict:
     return {
         "strategy": agent.ctx.active,
         "stats": stats,
+        "memory": agent.last_memory_stats or {},
     }
 
 
@@ -131,9 +133,19 @@ def _get_or_create_session() -> str:
     return create_session()
 
 
-def _set_session_cookie(resp: Response, session_id: str) -> Response:
-    """Устанавливает cookie сессии на 30 дней."""
+def _get_or_create_user_id() -> str:
+    """Читает user_id из cookie или создаёт новый."""
+    existing = (request.cookies.get("user_id") or "").strip()
+    if existing:
+        return existing
+    return f"user_{uuid4().hex}"
+
+
+def _set_session_cookie(resp: Response, session_id: str, user_id: str | None = None) -> Response:
+    """Устанавливает cookie сессии и пользователя на 30 дней."""
     resp.set_cookie("session_id", session_id, max_age=60 * 60 * 24 * 30, httponly=True)
+    if user_id:
+        resp.set_cookie("user_id", user_id, max_age=60 * 60 * 24 * 30, httponly=True)
     return resp
 
 
@@ -248,6 +260,7 @@ def chat():
     message = data.get("message", "").strip()
     requested_model = str(data.get("model", "")).strip()
     session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
 
     if requested_model:
         try:
@@ -262,6 +275,7 @@ def chat():
         {
             "message": message,
             "session_id": session_id,
+            "user_id": user_id,
             "requested_model": requested_model or None,
             "current_model": agent.model,
         },
@@ -272,7 +286,7 @@ def chat():
         return jsonify(response_payload), 400
 
     try:
-        reply = agent.chat(message)
+        reply = agent.chat(message, session_id=session_id, user_id=user_id)
         user_content, assistant_content = _extract_last_turn_for_storage(message, reply)
         save_message(session_id, "user", user_content)
         token_stats = agent.last_token_stats or {}
@@ -292,6 +306,8 @@ def chat():
             "reply": reply,
             "model": agent.model,
             "token_stats": token_stats,
+            "memory_stats": agent.last_memory_stats or {},
+            "prompt_preview": agent.last_prompt_preview or {},
             "ctx_state": ctx_state,
             "ctx_stats": ctx_state["stats"],
             "ctx_strategy": ctx_state["strategy"],
@@ -304,9 +320,10 @@ def chat():
                 "session_id": session_id,
                 "reply_len": len(reply),
                 "token_stats": token_stats,
+                "memory_stats": agent.last_memory_stats or {},
             },
         )
-        return _set_session_cookie(response, session_id)
+        return _set_session_cookie(response, session_id, user_id=user_id)
     except Exception as exc:
         logger.exception("[CHAT] Ошибка обработки запроса чата: %s", exc)
         err_text = str(exc)
@@ -327,6 +344,42 @@ def chat():
             status = 400
         _log_http_response("/chat", status, response_payload)
         return jsonify(response_payload), status
+
+
+@app.route("/debug/memory-layers", methods=["GET"])
+def debug_memory_layers():
+    """Возвращает снимок трёх слоёв памяти для Debug UI."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    query = (request.args.get("q") or "").strip()
+    try:
+        top_k = int(request.args.get("top_k", 3))
+    except (TypeError, ValueError):
+        top_k = 3
+    top_k = max(1, min(10, top_k))
+    _log_http_request(
+        "/debug/memory-layers",
+        {"session_id": session_id[:8] + "…", "user_id": user_id[:12] + "…", "q": query[:50] or "(empty)", "top_k": top_k},
+    )
+    try:
+        snapshot = agent.memory.debug_snapshot(
+            session_id=session_id,
+            user_id=user_id,
+            query=query,
+            top_k=top_k,
+        )
+        summary = {
+            "short_term_turns": snapshot.get("short_term", {}).get("turns_count", 0),
+            "working_present": snapshot.get("working", {}).get("present", False),
+            "long_term_decisions": len(snapshot.get("long_term", {}).get("decisions_top_k") or []),
+            "long_term_notes": len(snapshot.get("long_term", {}).get("notes_top_k") or []),
+        }
+        _log_http_response("/debug/memory-layers", 200, summary)
+        return jsonify(snapshot)
+    except Exception as exc:
+        logger.exception("[DEBUG] memory-layers failed: %s", exc)
+        _log_http_response("/debug/memory-layers", 500, {"error": str(exc)})
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/debug/ctx-strategy", methods=["POST"])
@@ -408,6 +461,7 @@ def ctx_switch_branch():
 def restore_session():
     """Восстанавливает состояние агента из БД по session_id cookie."""
     session_id = request.cookies.get("session_id")
+    user_id = _get_or_create_user_id()
     if not session_id or not session_exists(session_id):
         session_id = get_latest_session_id()
     _log_http_request("/session/restore", {"session_id": session_id})
@@ -432,6 +486,8 @@ def restore_session():
 
     full_messages = data.get("messages", [])
     agent.conversation_history = [{"role": msg["role"], "content": msg["content"]} for msg in full_messages]
+    agent.restore_memory_session(session_id=session_id, messages=agent.conversation_history)
+    agent.last_memory_stats = agent.memory.stats(session_id=session_id, user_id=user_id)
 
     if data.get("csv_summary"):
         agent.csv_summary = data.get("csv_summary")
@@ -500,18 +556,20 @@ def restore_session():
         },
     )
     response = jsonify(payload)
-    return _set_session_cookie(response, session_id)
+    return _set_session_cookie(response, session_id, user_id=user_id)
 
 
 @app.route("/session/new", methods=["POST"])
 def new_session():
     """Создаёт новую сессию и сбрасывает состояние агента."""
     sid = create_session()
+    user_id = _get_or_create_user_id()
     agent.reset()
+    agent.clear_session_memory(sid)
     payload = {"session_id": sid, "success": True}
     response = jsonify(payload)
     _log_http_response("/session/new", 200, {"success": True, "session_id": sid})
-    return _set_session_cookie(response, sid)
+    return _set_session_cookie(response, sid, user_id=user_id)
 
 
 @app.route("/reset", methods=["POST"])
@@ -523,6 +581,7 @@ def reset():
     if session_id and session_exists(session_id):
         clear_session_messages(session_id)
         clear_session_csv(session_id, delete_file=True)
+        agent.clear_session_memory(session_id)
 
     agent.reset()
     payload = {"success": True, "cleared": ["history", "csv"]}

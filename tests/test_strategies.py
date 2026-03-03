@@ -3,8 +3,6 @@
 Проверяет стратегии управления контекстом и менеджер стратегий.
 """
 
-from unittest.mock import MagicMock
-
 from context_strategies import (
     BranchingStrategy,
     ContextStrategyManager,
@@ -12,6 +10,23 @@ from context_strategies import (
     SlidingWindowStrategy,
     StickyFactsStrategy,
 )
+from llm.client import LLMChatResponse, LLMChoice, LLMMessage, LLMUsage
+
+
+class _StubLLM:
+    def __init__(self, content: str = ""):
+        self.content = content
+        self.calls = []
+
+    def chat_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        return LLMChatResponse(
+            id="stub",
+            model=str(kwargs.get("model") or "stub-model"),
+            choices=[LLMChoice(message=LLMMessage(content=self.content), finish_reason="stop")],
+            usage=LLMUsage(prompt_tokens=10, completion_tokens=10, total_tokens=20),
+            raw={"stub": True},
+        )
 
 
 def make_history(n: int) -> list[dict]:
@@ -39,17 +54,15 @@ def test_sliding_window() -> None:
 
 
 def test_sticky_facts() -> None:
-    mock_client = MagicMock()
-    response = MagicMock()
-    response.choices[0].message.content = (
+    stub = _StubLLM(
+        content=(
         '{"goal":"накопить 200000","constraints":"нерегулярный доход",'
         '"preferences":"не трогать путешествия","decisions":["лимит 8000"],'
         '"agreements":["чек по воскресеньям"],"profile":"москва"}'
+        )
     )
-    response.usage.total_tokens = 111
-    mock_client.chat.completions.create.return_value = response
 
-    strategy = StickyFactsStrategy(client=mock_client)
+    strategy = StickyFactsStrategy(client=stub)
     history = make_history(12)
     strategy.update_facts("Хочу экономить", history)
 
@@ -90,8 +103,7 @@ def test_branching() -> None:
 
 
 def test_history_compression() -> None:
-    mock_client = MagicMock()
-    strategy = HistoryCompressionStrategy(client=mock_client)
+    strategy = HistoryCompressionStrategy(client=_StubLLM(content="Резюме"))
 
     # Подменяем LLM-вызов, чтобы тест не зависел от API.
     strategy._compress_chunk = lambda chunk: f"Резюме из {len(chunk)} сообщений"
@@ -115,8 +127,7 @@ def test_history_compression() -> None:
 
 
 def test_context_strategy_manager() -> None:
-    mock_client = MagicMock()
-    manager = ContextStrategyManager(client=mock_client)
+    manager = ContextStrategyManager(client=_StubLLM())
     history = make_history(25)
 
     assert manager.active == "sticky_facts"
@@ -127,7 +138,7 @@ def test_context_strategy_manager() -> None:
     assert manager.stats(history)["strategy"] == "branching"
 
     dumped = manager.dump()
-    restored = ContextStrategyManager(client=mock_client)
+    restored = ContextStrategyManager(client=_StubLLM())
     restored.restore(dumped)
     assert restored.active == "branching"
 

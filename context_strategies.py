@@ -14,111 +14,13 @@ from __future__ import annotations
 import json
 import logging
 
-from openai import BadRequestError, OpenAI
+from llm.client import LLMClient
 
 logger = logging.getLogger("ctx_strategy")
 
-MODEL_COMPAT_PRESETS = {
-    # GPT-5-mini требует max_completion_tokens и default temperature.
-    "gpt-5-mini": {"token_param": "max_completion_tokens", "drop_temperature": True},
-}
-MODEL_COMPAT_OVERRIDES: dict[str, dict[str, object]] = {}
-
-
-def _apply_model_compat(model_name: str, request_kwargs: dict) -> dict:
-    """Применяет известные ограничения модели до отправки запроса."""
-    adjusted = dict(request_kwargs)
-    profile: dict[str, object] = {}
-    preset = MODEL_COMPAT_PRESETS.get(model_name)
-    if isinstance(preset, dict):
-        profile.update(preset)
-    cached = MODEL_COMPAT_OVERRIDES.get(model_name)
-    if isinstance(cached, dict):
-        profile.update(cached)
-
-    token_param = profile.get("token_param")
-    if token_param == "max_completion_tokens" and "max_tokens" in adjusted and "max_completion_tokens" not in adjusted:
-        adjusted["max_completion_tokens"] = adjusted.pop("max_tokens")
-    elif token_param == "max_tokens" and "max_completion_tokens" in adjusted and "max_tokens" not in adjusted:
-        adjusted["max_tokens"] = adjusted.pop("max_completion_tokens")
-
-    if profile.get("drop_temperature"):
-        adjusted.pop("temperature", None)
-
-    return adjusted
-
-
-def _remember_model_compat(
-    model_name: str,
-    *,
-    token_param: str | None = None,
-    drop_temperature: bool | None = None,
-) -> None:
-    """Запоминает ограничения модели, чтобы не повторять ретраи."""
-    if not model_name:
-        return
-    profile = MODEL_COMPAT_OVERRIDES.setdefault(model_name, {})
-    if token_param in {"max_tokens", "max_completion_tokens"}:
-        profile["token_param"] = token_param
-    if drop_temperature is True:
-        profile["drop_temperature"] = True
-
-
-def _create_chat_completion(client: OpenAI, **kwargs):
-    """Вызов Chat Completions с авто-совместимостью max_tokens/max_completion_tokens."""
-    model_name = str(kwargs.get("model") or "unknown")
-    request_kwargs = _apply_model_compat(model_name, dict(kwargs))
-    seen_signatures: set[tuple[tuple[str, str], ...]] = set()
-
-    for _ in range(4):
-        signature = tuple(sorted((k, repr(v)) for k, v in request_kwargs.items()))
-        if signature in seen_signatures:
-            break
-        seen_signatures.add(signature)
-        try:
-            return client.chat.completions.create(**request_kwargs)
-        except BadRequestError as exc:
-            error_text = str(exc).lower()
-            fallback_kwargs = dict(request_kwargs)
-
-            unsupported_param = "unsupported parameter" in error_text
-            mentions_max_tokens = "max_tokens" in error_text
-            mentions_max_completion = "max_completion_tokens" in error_text
-            if unsupported_param and (mentions_max_tokens or mentions_max_completion):
-                if "max_tokens" in fallback_kwargs:
-                    _remember_model_compat(model_name, token_param="max_completion_tokens")
-                    fallback_kwargs = _apply_model_compat(model_name, fallback_kwargs)
-                    logger.warning(
-                        "[CTX] model=%s: max_tokens не поддерживается, повторяю с max_completion_tokens",
-                        fallback_kwargs.get("model", "unknown"),
-                    )
-                    request_kwargs = fallback_kwargs
-                    continue
-                if "max_completion_tokens" in fallback_kwargs:
-                    _remember_model_compat(model_name, token_param="max_tokens")
-                    fallback_kwargs = _apply_model_compat(model_name, fallback_kwargs)
-                    logger.warning(
-                        "[CTX] model=%s: max_completion_tokens не поддерживается, повторяю с max_tokens",
-                        fallback_kwargs.get("model", "unknown"),
-                    )
-                    request_kwargs = fallback_kwargs
-                    continue
-
-            unsupported_value = "unsupported value" in error_text
-            temperature_issue = "temperature" in error_text
-            if unsupported_value and temperature_issue and "temperature" in fallback_kwargs:
-                _remember_model_compat(model_name, drop_temperature=True)
-                fallback_kwargs = _apply_model_compat(model_name, fallback_kwargs)
-                logger.warning(
-                    "[CTX] model=%s: temperature не поддерживается, повторяю с параметром по умолчанию",
-                    fallback_kwargs.get("model", "unknown"),
-                )
-                request_kwargs = fallback_kwargs
-                continue
-
-            raise
-
-    return client.chat.completions.create(**request_kwargs)
+def _create_chat_completion(client: LLMClient, **kwargs):
+    """Единый вызов через абстракцию LLMClient."""
+    return client.chat_completion(**kwargs)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -203,7 +105,7 @@ class StickyFactsStrategy:
         "profile": "персональный контекст: город, жильё, семья и т.д.",
     }
 
-    def __init__(self, client: OpenAI, model: str = "gpt-4o-mini"):
+    def __init__(self, client: LLMClient, model: str = "gpt-4o-mini"):
         self.client = client
         self.model = model
         self.facts: dict = {k: "" for k in self.FACT_KEYS}
@@ -553,7 +455,7 @@ class HistoryCompressionStrategy:
     CHUNK_SIZE = 10
     RECENT_N = 10
 
-    def __init__(self, client: OpenAI, model: str = "gpt-4o-mini"):
+    def __init__(self, client: LLMClient, model: str = "gpt-4o-mini"):
         self.client = client
         self.model = model
         self.summary: str = ""
@@ -689,7 +591,7 @@ class ContextStrategyManager:
     Это единственный класс с которым работает agent.py.
     """
 
-    def __init__(self, client: OpenAI, model: str = "gpt-4o-mini"):
+    def __init__(self, client: LLMClient, model: str = "gpt-4o-mini"):
         self.model = model
         self._strategies = {
             "sliding_window": SlidingWindowStrategy(),
