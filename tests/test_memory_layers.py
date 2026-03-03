@@ -345,6 +345,68 @@ def test_memory_debug_snapshot_full_truncation_flag() -> None:
     assert len(turns[0]["preview"]) <= 121
 
 
+def test_memory_write_feed_records_router_layers() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    uid = "writer_user"
+
+    mem.route_user_message(
+        session_id=sid,
+        user_id=uid,
+        user_message="С этого момента всегда отвечай кратко. Решили использовать SQLite.",
+    )
+    writes = mem.get_recent_write_events(session_id=sid, limit=10)
+    layers = {w.get("layer") for w in writes}
+    assert "long_term.profile" in layers
+    assert "long_term.decision" in layers
+    # Пассивное сохранение short-term turn не должно попадать в индикатор save policy.
+    assert "short_term" not in layers
+
+
+def test_clear_working_layer_does_not_touch_other_layers() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    uid = "clear_working_user"
+    mem.short_term.append(sid, "user", "short-term message")
+    mem.working.start_task(session_id=sid, goal="Сделать анализ")
+    mem.long_term.add_decision(uid, "Используем консервативный бюджет", tags=["budget"])
+
+    cleared = mem.clear_working_layer(session_id=sid)
+    assert cleared is True
+    assert mem.working.load(sid) is None
+    assert len(mem.short_term.get_context(sid)) == 1
+    assert len(mem.long_term.retrieve(user_id=uid, query="budget", top_k=3)["decisions"]) >= 1
+
+
+def test_delete_long_term_entry_does_not_touch_short_or_working() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    uid = "delete_lt_user"
+    mem.short_term.append(sid, "user", "keep me")
+    mem.working.start_task(session_id=sid, goal="Задача")
+    mem.working.update(sid, plan=["Шаг 1"], current_step="Шаг 1")
+    mem.long_term.add_note(uid, "Проверять категорию подписок", tags=["subscriptions"])
+
+    lt_before = mem.long_term.retrieve(user_id=uid, query="подписок", top_k=3)
+    assert lt_before["notes"], "expected at least one long-term note before delete"
+    note_id = int(lt_before["notes"][0]["id"])
+
+    deleted = mem.delete_long_term_entry(
+        session_id=sid,
+        user_id=uid,
+        entry_type="note",
+        entry_id=note_id,
+    )
+    assert deleted is True
+    assert len(mem.short_term.get_context(sid)) == 1
+    assert mem.working.load(sid) is not None
+    lt_after = mem.long_term.retrieve(user_id=uid, query="подписок", top_k=3)
+    assert all(int(n["id"]) != note_id for n in lt_after["notes"])
+
+
 if __name__ == "__main__":
     test_short_term_limit_n()
     test_short_term_append_prunes_to_n_per_session()
@@ -364,4 +426,7 @@ if __name__ == "__main__":
     test_memory_debug_snapshot_working_present_and_empty()
     test_memory_debug_snapshot_long_term_top_k()
     test_memory_debug_snapshot_full_truncation_flag()
+    test_memory_write_feed_records_router_layers()
+    test_clear_working_layer_does_not_touch_other_layers()
+    test_delete_long_term_entry_does_not_touch_short_or_working()
     print("\n🎉 Memory layers tests passed")

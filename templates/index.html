@@ -633,8 +633,48 @@ body::before {
   border-bottom: 1px solid var(--border);
 }
 
+.dd-memory-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .dd-memory-title {
   font-size: 0.7rem; font-weight: 600; color: var(--muted2);
+}
+
+.dd-memory-write-feed {
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dd-memory-write-item {
+  font-size: 0.64rem;
+  color: var(--muted2);
+  background: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  line-height: 1.35;
+}
+
+.dd-memory-write-empty {
+  font-size: 0.64rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.dd-memory-write-layer {
+  color: var(--gold-dim);
+  font-weight: 600;
+}
+
+.dd-memory-write-meta {
+  color: var(--muted);
+  font-family: var(--mono);
 }
 
 .dd-memory-tabs {
@@ -732,6 +772,24 @@ body::before {
 .dd-memory-expand-btn:hover {
   color: var(--gold-dim);
   border-color: rgba(232,201,109,0.35);
+}
+
+.dd-memory-delete-btn {
+  font-size: 0.62rem;
+  background: transparent;
+  border: 1px solid rgba(240,110,110,0.35);
+  border-radius: 4px;
+  padding: 2px 7px;
+  color: #f2a6a6;
+  cursor: pointer;
+  transition: color 0.14s, border-color 0.14s, background 0.14s;
+  margin-left: 4px;
+}
+
+.dd-memory-delete-btn:hover {
+  color: #f7c4c4;
+  border-color: rgba(240,110,110,0.7);
+  background: rgba(240,110,110,0.08);
 }
 
 .dd-memory-working-content,
@@ -1809,7 +1867,13 @@ textarea::placeholder { color: var(--muted); }
         <div class="dd-memory-wrap">
           <div class="dd-memory-header">
             <span class="dd-memory-title">Краткосрочная / Рабочая / Долговременная</span>
-            <button type="button" class="dd-micro-btn" id="memoryLayersRefresh" onclick="DebugMenu.refreshMemoryLayers()">Refresh</button>
+            <div class="dd-memory-actions">
+              <button type="button" class="dd-micro-btn" id="memoryClearWorkingBtn" onclick="DebugMenu.clearWorkingMemory()">Очистить рабочую</button>
+              <button type="button" class="dd-micro-btn" id="memoryLayersRefresh" onclick="DebugMenu.refreshMemoryLayers()">Refresh</button>
+            </div>
+          </div>
+          <div class="dd-memory-write-feed" id="memoryWriteFeed">
+            <div class="dd-memory-write-empty">Событий записи пока нет</div>
           </div>
           <div class="dd-memory-tabs">
             <button type="button" class="dd-memory-tab active" data-tab="short_term">Краткосрочная</button>
@@ -2204,6 +2268,7 @@ textarea::placeholder { color: var(--muted); }
     let _memoryLayersTab = 'short_term';
     let _memoryLayersCache = null;
     let _memoryLayersExpanded = new Set();
+    let _memoryLayersQuery = '';
 
     // ── Публичный API ──
 
@@ -2253,10 +2318,11 @@ textarea::placeholder { color: var(--muted); }
     }
 
     function refreshMemoryLayers(query) {
+      if (query != null) _memoryLayersQuery = String(query || '').trim();
       const url = new URL('/debug/memory-layers', window.location.origin);
-      if (query != null && String(query).trim() !== '') url.searchParams.set('q', query);
+      if (_memoryLayersQuery) url.searchParams.set('q', _memoryLayersQuery);
       fetch(url.toString())
-        .then((r) => r.json())
+        .then((r) => parseApiResponse(r))
         .then((data) => {
           if (data.error) {
             const list = document.getElementById('memoryShortTermList');
@@ -2275,9 +2341,46 @@ textarea::placeholder { color: var(--muted); }
     function updateMemoryLayers(snapshot) {
       if (!snapshot) return;
       _memoryLayersCache = snapshot;
+      _renderMemoryWrites(snapshot.memory_writes || []);
       _renderShortTerm(snapshot.short_term);
       _renderWorking(snapshot.working);
       _renderLongTerm(snapshot.long_term);
+    }
+
+    function _renderMemoryWrites(events) {
+      const feed = document.getElementById('memoryWriteFeed');
+      if (!feed) return;
+      const rows = Array.isArray(events) ? events : [];
+      if (!rows.length) {
+        feed.innerHTML = '<div class="dd-memory-write-empty">Событий записи пока нет</div>';
+        return;
+      }
+      feed.innerHTML = rows
+        .slice(-5)
+        .reverse()
+        .map((evt) => {
+          const layer = String(evt.layer || '');
+          const keys = Array.isArray(evt.keys) && evt.keys.length ? evt.keys.join(', ') : '—';
+          const op = String(evt.operation || 'save');
+          const source = String(evt.source || '');
+          const ts = _formatWriteTime(evt.timestamp || '');
+          return (
+            '<div class="dd-memory-write-item">' +
+              '<span class="dd-memory-write-layer">' + esc(layer) + '</span> ' +
+              '<span class="dd-memory-write-meta">' + esc(op) + '</span> ' +
+              '· keys: ' + esc(keys) + ' ' +
+              '<span class="dd-memory-write-meta">(' + esc(source || 'n/a') + ', ' + esc(ts) + ')</span>' +
+            '</div>'
+          );
+        })
+        .join('');
+    }
+
+    function _formatWriteTime(isoText) {
+      if (!isoText) return '';
+      const dt = new Date(isoText);
+      if (Number.isNaN(dt.getTime())) return String(isoText);
+      return dt.toLocaleTimeString('ru-RU', { hour12: false });
     }
 
     function _renderShortTerm(data) {
@@ -2378,6 +2481,9 @@ textarea::placeholder { color: var(--muted); }
         html += '<div class="dd-memory-lt-card" data-id="' + esc(id) + '">';
         html += '<div class="dd-memory-item-meta"><span class="dd-memory-item-role">Решение</span><span class="dd-memory-item-ts">' + esc(d.created_at || '') + '</span>';
         html += '<button type="button" class="dd-memory-expand-btn" onclick="DebugMenu._toggleExpand(\'' + esc(id) + '\')">' + btnLabel + '</button></div>';
+        if (d.id != null) {
+          html += '<button type="button" class="dd-memory-delete-btn" onclick="DebugMenu.deleteLongTermEntry(\'decision\',' + Number(d.id) + ')">Удалить</button>';
+        }
         if (tagsHtml) html += '<div class="dd-memory-lt-card-tags">' + tagsHtml + '</div>';
         html += '<div class="dd-memory-item-preview">' + esc(text) + (d.full_truncated && expanded ? ' …' : '') + '</div></div>';
       });
@@ -2391,6 +2497,9 @@ textarea::placeholder { color: var(--muted); }
         html += '<div class="dd-memory-lt-card" data-id="' + esc(id) + '">';
         html += '<div class="dd-memory-item-meta"><span class="dd-memory-item-role">Заметка</span><span class="dd-memory-item-ts">' + esc(n.created_at || '') + '</span>';
         html += '<button type="button" class="dd-memory-expand-btn" onclick="DebugMenu._toggleExpand(\'' + esc(id) + '\')">' + btnLabel + '</button></div>';
+        if (n.id != null) {
+          html += '<button type="button" class="dd-memory-delete-btn" onclick="DebugMenu.deleteLongTermEntry(\'note\',' + Number(n.id) + ')">Удалить</button>';
+        }
         if (tagsHtml) html += '<div class="dd-memory-lt-card-tags">' + tagsHtml + '</div>';
         html += '<div class="dd-memory-item-preview">' + esc(text) + (n.full_truncated && expanded ? ' …' : '') + '</div></div>';
       });
@@ -2405,6 +2514,40 @@ textarea::placeholder { color: var(--muted); }
       if (_memoryLayersExpanded.has(itemId)) _memoryLayersExpanded.delete(itemId);
       else _memoryLayersExpanded.add(itemId);
       if (_memoryLayersCache) updateMemoryLayers(_memoryLayersCache);
+    }
+
+    async function clearWorkingMemory() {
+      try {
+        const res = await fetch('/debug/memory/working/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ q: _memoryLayersQuery, top_k: 3 }),
+        });
+        const data = await parseApiResponse(res);
+        if (data && data.snapshot) updateMemoryLayers(data.snapshot);
+      } catch (err) {
+        console.warn('[DebugMemory] clear working failed:', err);
+      }
+    }
+
+    async function deleteLongTermEntry(entryType, entryId) {
+      if (!entryType || Number.isNaN(Number(entryId))) return;
+      try {
+        const res = await fetch('/debug/memory/long-term/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entry_type: entryType,
+            id: Number(entryId),
+            q: _memoryLayersQuery,
+            top_k: 3,
+          }),
+        });
+        const data = await parseApiResponse(res);
+        if (data && data.snapshot) updateMemoryLayers(data.snapshot);
+      } catch (err) {
+        console.warn('[DebugMemory] delete long-term failed:', err);
+      }
     }
 
     function updateCtxState(data) {
@@ -2721,6 +2864,8 @@ textarea::placeholder { color: var(--muted); }
       switchBranch,
       refreshMemoryLayers,
       updateMemoryLayers,
+      clearWorkingMemory,
+      deleteLongTermEntry,
       _toggleExpand,
     };
   })();

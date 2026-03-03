@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections import defaultdict, deque
+from datetime import datetime
 import logging
 
 from memory.long_term import LongTermMemory
-from memory.models import TaskContext, TaskState
+from memory.models import MemoryWriteEvent, TaskContext, TaskState
 from memory.prompt_builder import PromptBuilder
 from memory.router import MemoryRouter
 from memory.short_term import ShortTermMemory
@@ -13,6 +15,7 @@ logger = logging.getLogger("memory")
 
 PREVIEW_LENGTH = 120
 MAX_DEBUG_TEXT_CHARS = 4000
+MAX_WRITE_EVENTS = 50
 
 
 class MemoryManager:
@@ -22,15 +25,18 @@ class MemoryManager:
         self.long_term = LongTermMemory()
         self.router = MemoryRouter()
         self.prompt_builder = PromptBuilder()
+        self._write_events: dict[str, deque[dict]] = defaultdict(lambda: deque(maxlen=MAX_WRITE_EVENTS))
 
     def route_user_message(self, *, session_id: str, user_id: str, user_message: str):
-        return self.router.route_user_message(
+        events = self.router.route_user_message(
             session_id=session_id,
             user_id=user_id,
             user_message=user_message,
             working=self.working,
             long_term=self.long_term,
         )
+        self._record_write_events(session_id=session_id, events=events, source="router")
+        return events
 
     def build_messages(
         self,
@@ -70,6 +76,43 @@ class MemoryManager:
     def clear_session(self, session_id: str) -> None:
         self.short_term.clear_session(session_id)
         self.working.clear_session(session_id)
+        self._write_events.pop(session_id, None)
+
+    def clear_working_layer(self, *, session_id: str) -> bool:
+        had_task = self.working.load(session_id) is not None
+        self.working.clear_session(session_id)
+        if had_task:
+            self._record_write_event(
+                session_id=session_id,
+                layer="working",
+                keys=["task_context"],
+                operation="clear",
+                source="debug_ui",
+            )
+        return had_task
+
+    def delete_long_term_entry(self, *, session_id: str, user_id: str, entry_type: str, entry_id: int) -> bool:
+        normalized = str(entry_type or "").strip().lower()
+        deleted = False
+        if normalized == "decision":
+            deleted = self.long_term.delete_decision(user_id=user_id, decision_id=int(entry_id))
+            layer = "long_term.decision"
+        elif normalized == "note":
+            deleted = self.long_term.delete_note(user_id=user_id, note_id=int(entry_id))
+            layer = "long_term.note"
+        else:
+            raise ValueError("entry_type must be 'decision' or 'note'")
+
+        if deleted:
+            self._record_write_event(
+                session_id=session_id,
+                layer=layer,
+                keys=["id"],
+                operation="delete",
+                source="debug_ui",
+                entry_id=int(entry_id),
+            )
+        return deleted
 
     def hydrate_short_term(self, session_id: str, messages: list[dict[str, str]]) -> None:
         self.short_term.hydrate(session_id=session_id, messages=messages)
@@ -109,7 +152,43 @@ class MemoryManager:
             "longterm_decisions": len(longterm.get("decisions") or []),
             "longterm_notes": len(longterm.get("notes") or []),
             "memory_read": read_meta,
+            "recent_writes": len(self.get_recent_write_events(session_id=session_id, limit=10)),
         }
+
+    def _record_write_event(
+        self,
+        *,
+        session_id: str,
+        layer: str,
+        keys: list[str],
+        operation: str = "save",
+        source: str = "router",
+        entry_id: int | None = None,
+    ) -> None:
+        event = {
+            "layer": layer,
+            "keys": list(keys or []),
+            "operation": operation,
+            "source": source,
+            "entry_id": entry_id,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        self._write_events[session_id].append(event)
+
+    def _record_write_events(self, *, session_id: str, events: list[MemoryWriteEvent], source: str = "router") -> None:
+        for event in events:
+            self._record_write_event(
+                session_id=session_id,
+                layer=event.layer,
+                keys=event.keys,
+                operation="save",
+                source=source,
+            )
+
+    def get_recent_write_events(self, *, session_id: str, limit: int = 10) -> list[dict]:
+        events = list(self._write_events.get(session_id) or [])
+        lim = max(1, int(limit))
+        return events[-lim:]
 
     def _format_entry_for_debug(self, entry: dict) -> dict:
         text = str(entry.get("text") or "")
@@ -125,6 +204,8 @@ class MemoryManager:
             "preview": preview,
             "full": full,
             "full_truncated": full_truncated,
+            "entry_type": str(entry.get("type") or ""),
+            "source": str(entry.get("source") or ""),
         }
 
     def debug_snapshot(
@@ -180,4 +261,5 @@ class MemoryManager:
                 "notes_top_k": notes_top_k,
                 "read_meta": read_meta,
             },
+            "memory_writes": self.get_recent_write_events(session_id=session_id, limit=10),
         }

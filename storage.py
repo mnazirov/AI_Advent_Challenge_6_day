@@ -754,6 +754,32 @@ def memory_list_longterm_notes(user_id: str, limit: int = 50) -> list[dict]:
     ]
 
 
+def memory_delete_longterm_decision(user_id: str, decision_id: int) -> int:
+    """Удаляет конкретное long-term решение пользователя. Возвращает число удалённых строк."""
+    with _get_conn() as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM memory_longterm_decisions
+            WHERE user_id=? AND id=?
+            """,
+            (user_id, int(decision_id)),
+        )
+    return int(cur.rowcount or 0)
+
+
+def memory_delete_longterm_note(user_id: str, note_id: int) -> int:
+    """Удаляет конкретную long-term заметку пользователя. Возвращает число удалённых строк."""
+    with _get_conn() as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM memory_longterm_notes
+            WHERE user_id=? AND id=?
+            """,
+            (user_id, int(note_id)),
+        )
+    return int(cur.rowcount or 0)
+
+
 def memory_add_longterm_pending(
     *,
     user_id: str,

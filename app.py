@@ -373,6 +373,7 @@ def debug_memory_layers():
             "working_present": snapshot.get("working", {}).get("present", False),
             "long_term_decisions": len(snapshot.get("long_term", {}).get("decisions_top_k") or []),
             "long_term_notes": len(snapshot.get("long_term", {}).get("notes_top_k") or []),
+            "memory_writes": len(snapshot.get("memory_writes") or []),
         }
         _log_http_response("/debug/memory-layers", 200, summary)
         return jsonify(snapshot)
@@ -380,6 +381,107 @@ def debug_memory_layers():
         logger.exception("[DEBUG] memory-layers failed: %s", exc)
         _log_http_response("/debug/memory-layers", 500, {"error": str(exc)})
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/debug/memory/working/clear", methods=["POST"])
+def debug_clear_working_memory():
+    """Очищает только рабочую память текущей сессии."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    data = request.get_json(silent=True) or {}
+    query = str(data.get("q") or "").strip()
+    try:
+        top_k = int(data.get("top_k", 3))
+    except (TypeError, ValueError):
+        top_k = 3
+    top_k = max(1, min(10, top_k))
+    _log_http_request(
+        "/debug/memory/working/clear",
+        {"session_id": session_id[:8] + "…", "user_id": user_id[:12] + "…", "top_k": top_k},
+    )
+    try:
+        cleared = agent.memory.clear_working_layer(session_id=session_id)
+        snapshot = agent.memory.debug_snapshot(session_id=session_id, user_id=user_id, query=query, top_k=top_k)
+        payload = {"success": True, "cleared": bool(cleared), "snapshot": snapshot}
+        _log_http_response(
+            "/debug/memory/working/clear",
+            200,
+            {
+                "success": True,
+                "cleared": bool(cleared),
+                "working_present": snapshot.get("working", {}).get("present", False),
+                "memory_writes": len(snapshot.get("memory_writes") or []),
+            },
+        )
+        return jsonify(payload)
+    except Exception as exc:
+        logger.exception("[DEBUG] memory working clear failed: %s", exc)
+        _log_http_response("/debug/memory/working/clear", 500, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/debug/memory/long-term/delete", methods=["POST"])
+def debug_delete_longterm_entry():
+    """Удаляет конкретную запись из long-term памяти (decision/note)."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    data = request.get_json(silent=True) or {}
+    entry_type = str(data.get("entry_type") or "").strip().lower()
+    entry_id_raw = data.get("id")
+    query = str(data.get("q") or "").strip()
+    try:
+        top_k = int(data.get("top_k", 3))
+    except (TypeError, ValueError):
+        top_k = 3
+    top_k = max(1, min(10, top_k))
+    _log_http_request(
+        "/debug/memory/long-term/delete",
+        {
+            "session_id": session_id[:8] + "…",
+            "user_id": user_id[:12] + "…",
+            "entry_type": entry_type,
+            "id": entry_id_raw,
+            "top_k": top_k,
+        },
+    )
+    if entry_type not in {"decision", "note"}:
+        payload = {"success": False, "error": "entry_type должен быть decision или note"}
+        _log_http_response("/debug/memory/long-term/delete", 400, payload)
+        return jsonify(payload), 400
+    try:
+        entry_id = int(entry_id_raw)
+    except (TypeError, ValueError):
+        payload = {"success": False, "error": "id должен быть целым числом"}
+        _log_http_response("/debug/memory/long-term/delete", 400, payload)
+        return jsonify(payload), 400
+
+    try:
+        deleted = agent.memory.delete_long_term_entry(
+            session_id=session_id,
+            user_id=user_id,
+            entry_type=entry_type,
+            entry_id=entry_id,
+        )
+        snapshot = agent.memory.debug_snapshot(session_id=session_id, user_id=user_id, query=query, top_k=top_k)
+        payload = {"success": True, "deleted": bool(deleted), "snapshot": snapshot}
+        _log_http_response(
+            "/debug/memory/long-term/delete",
+            200,
+            {
+                "success": True,
+                "deleted": bool(deleted),
+                "entry_type": entry_type,
+                "id": entry_id,
+                "long_term_decisions": len(snapshot.get("long_term", {}).get("decisions_top_k") or []),
+                "long_term_notes": len(snapshot.get("long_term", {}).get("notes_top_k") or []),
+                "memory_writes": len(snapshot.get("memory_writes") or []),
+            },
+        )
+        return jsonify(payload)
+    except Exception as exc:
+        logger.exception("[DEBUG] memory long-term delete failed: %s", exc)
+        _log_http_response("/debug/memory/long-term/delete", 500, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 @app.route("/debug/ctx-strategy", methods=["POST"])

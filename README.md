@@ -148,6 +148,9 @@ python3 app.py
 
 | Метод | Путь | Описание |
 |---|---|---|
+| `GET` | `/debug/memory-layers` | Снимок трёх слоёв памяти для DebugMenu |
+| `POST` | `/debug/memory/working/clear` | Очистить только рабочую память текущей сессии |
+| `POST` | `/debug/memory/long-term/delete` | Удалить конкретную запись `decision/note` из long-term |
 | `POST` | `/debug/ctx-strategy` | Сменить контекстную стратегию |
 | `POST` | `/ctx/checkpoint` | Создать checkpoint (branching) |
 | `POST` | `/ctx/fork` | Создать ветку от checkpoint (branching) |
@@ -207,6 +210,14 @@ Content-Type: application/json
   - `[MEMORY_READ] layer=long_term hits=<n> ids=[...] reason=<match/score>`
   - `[MEMORY_READ] layer=working present=<true/false>`
   - `[MEMORY_READ] layer=short_term turns=<n>`
+
+### DebugMenu по слоям памяти
+
+- В DebugMenu блок `Слои памяти` показывает три отдельные вкладки: `Краткосрочная`, `Рабочая`, `Долговременная`.
+- Есть ручные действия:
+  - `Очистить рабочую` — очищает только `working` слой (short-term/long-term не трогаются).
+  - `Удалить` на карточках `Решение/Заметка` — удаляет только выбранную long-term запись.
+- Есть индикатор последних записей (`layer`, `operation`, `keys`, `timestamp`) для проверки write-policy в реальном времени.
 
 ### Prompt Builder
 

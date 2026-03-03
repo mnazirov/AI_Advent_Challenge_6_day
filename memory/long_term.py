@@ -134,6 +134,14 @@ class LongTermMemory:
             },
         }
 
+    def delete_decision(self, *, user_id: str, decision_id: int) -> bool:
+        """Удаляет решение long-term памяти пользователя."""
+        return storage.memory_delete_longterm_decision(user_id=user_id, decision_id=int(decision_id)) > 0
+
+    def delete_note(self, *, user_id: str, note_id: int) -> bool:
+        """Удаляет заметку long-term памяти пользователя."""
+        return storage.memory_delete_longterm_note(user_id=user_id, note_id=int(note_id)) > 0
+
     def propose_assistant_entry(
         self,
         *,

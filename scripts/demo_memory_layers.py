@@ -37,6 +37,29 @@ def _print_header(title: str) -> None:
     print("=" * 88)
 
 
+def _log_action(action: str, detail: str = "") -> None:
+    print(f"  ACTION : {action}" + (f" → {detail}" if detail else ""))
+
+
+def _log_write(layer: str, summary: str) -> None:
+    print(f"  WRITE  → {layer:<10} : {summary}")
+
+
+def _log_read(layer: str, summary: str) -> None:
+    print(f"  READ   ← {layer:<10} : {summary}")
+
+
+def _log_result(allowed: bool, reason: str = "") -> None:
+    status = "allowed ✓" if allowed else "blocked ✗"
+    print(f"  RESULT : {status}" + (f" ({reason})" if reason else ""))
+
+
+def _print_scene(label: str, status: str = "START") -> None:
+    marker = "┌" if status == "START" else "└"
+    tail_len = max(0, 60 - len(label))
+    print(f"\n{marker}── [SCENE] {label} {'─' * tail_len}")
+
+
 def _format_short_term_snapshot(short_messages: list[dict[str, str]], limit_n: int = 30) -> list[str]:
     turns = short_messages[-max(1, int(limit_n)) :]
     lines = [f"[SHORT_TERM_SNAPSHOT] last_turns={len(turns)}"]
@@ -47,17 +70,15 @@ def _format_short_term_snapshot(short_messages: list[dict[str, str]], limit_n: i
     return lines
 
 
-def _format_working_snapshot(working) -> str:
+def _print_working_snapshot(working) -> None:
     if not working:
-        return "[WORKING_SNAPSHOT] none"
-    return (
-        "[WORKING_SNAPSHOT] "
-        f"state={working.state.value} "
-        f"plan={working.plan} "
-        f"current_step={working.current_step!r} "
-        f"done_steps={working.done_steps} "
-        f"open_questions={working.open_questions}"
-    )
+        print("  [WORKING] none")
+        return
+    print(f"  [WORKING] state        = {working.state.value}")
+    print(f"  [WORKING] current_step = {working.current_step!r}")
+    print(f"  [WORKING] plan         = {working.plan}")
+    print(f"  [WORKING] done_steps   = {working.done_steps}")
+    print(f"  [WORKING] open_q       = {working.open_questions}")
 
 
 def _print_layers(agent: Any, session_id: str, user_id: str) -> None:
@@ -68,7 +89,7 @@ def _print_layers(agent: Any, session_id: str, user_id: str) -> None:
     for line in _format_short_term_snapshot(short, limit_n=getattr(agent.memory.short_term, "limit_n", 30)):
         print(line)
 
-    print(_format_working_snapshot(working))
+    _print_working_snapshot(working)
 
     profile = longterm.get("profile") or {}
     print("[LONG_TERM_SNAPSHOT][PROFILE]")
@@ -136,7 +157,10 @@ def run_demo(real_llm: bool = True) -> None:
     if not real_llm:
         agent.llm_client = MockLLMClient()
 
-    _print_header("SCENE A: SHORT-TERM MEMORY WINDOW (ФИНАНСОВЫЙ КОНТЕКСТ)")
+    scene_a_label = "SCENE A: SHORT-TERM MEMORY WINDOW (ФИНАНСОВЫЙ КОНТЕКСТ)"
+    _print_header(scene_a_label)
+    _print_scene(scene_a_label, "START")
+    _log_action("clear_session", f"session_id={session_id}")
     agent.memory.clear_session(session_id)
     for i in range(1, 36):
         month = ((i - 1) % 12) + 1
@@ -145,7 +169,9 @@ def run_demo(real_llm: bool = True) -> None:
             "user",
             f"Заметка по бюджету #{i}: в месяце {month} выросли траты на еду и подписки",
         )
+    _log_write("SHORT", f"appended {i} turns")
     _print_layers(agent, session_id, user_id)
+    _log_read("SHORT", "last N turns loaded into prompt")
     reply = agent.chat(
         "Учитывай последние реплики и кратко резюмируй мой финансовый контекст",
         session_id=session_id,
@@ -153,39 +179,57 @@ def run_demo(real_llm: bool = True) -> None:
     )
     _print_prompt_preview(agent)
     _print_reply(reply)
+    _print_scene(scene_a_label, "END")
 
-    _print_header("SCENE B: WORKING MEMORY + STATE MACHINE (ПЛАН БЮДЖЕТА)")
-    agent.memory.working.start_task(session_id=session_id, goal="Собрать план оптимизации личного бюджета")
+    scene_b_label = "SCENE B: WORKING MEMORY + STATE MACHINE (ПЛАН БЮДЖЕТА)"
+    _print_header(scene_b_label)
+    _print_scene(scene_b_label, "START")
+    goal = "Собрать план оптимизации личного бюджета"
+    agent.memory.working.start_task(session_id=session_id, goal=goal)
+    _log_action("start_task", f'goal="{goal}"')
+    _log_write("WORKING", "state=PLANNING, plan=[], current_step=None")
     blocked = agent.chat("Сразу дай финальный план бюджета", session_id=session_id, user_id=user_id)
+    _log_result(False, "state=PLANNING, no steps defined")
     _print_layers(agent, session_id, user_id)
     _print_reply(blocked)
 
+    plan = [
+        "Собрать базовые метрики доходов и расходов",
+        "Выделить зоны перерасхода по категориям",
+        "Сформировать план экономии и контроля",
+    ]
+    current_step = "Собрать базовые метрики доходов и расходов"
     ctx = agent.memory.working.update(
         session_id,
-        plan=[
-            "Собрать базовые метрики доходов и расходов",
-            "Выделить зоны перерасхода по категориям",
-            "Сформировать план экономии и контроля",
-        ],
-        current_step="Собрать базовые метрики доходов и расходов",
+        plan=plan,
+        current_step=current_step,
     )
     agent.memory.working.transition_state(ctx, ctx.state.__class__("EXECUTION"))
     agent.memory.working.save(ctx)
+    _log_write("WORKING", f"plan=[{len(plan)} steps], current_step={current_step!r}")
+    _log_action("transition_state", "PLANNING → EXECUTION")
 
     allowed = agent.chat("Теперь составь пошаговый план бюджета", session_id=session_id, user_id=user_id)
+    _log_read("WORKING", "state=EXECUTION → unblocked")
+    _log_result(True)
     _print_layers(agent, session_id, user_id)
     _print_prompt_preview(agent)
     _print_reply(allowed)
+    _print_scene(scene_b_label, "END")
 
-    _print_header("SCENE C: LONG-TERM MEMORY ACROSS RESTART (ФИНАНСОВЫЕ ПРАВИЛА)")
+    scene_c_label = "SCENE C: LONG-TERM MEMORY ACROSS RESTART (ФИНАНСОВЫЕ ПРАВИЛА)"
+    _print_header(scene_c_label)
+    _print_scene(scene_c_label, "START")
     agent.chat(
         "С этого момента всегда отвечай кратко, в рублях и без англицизмов. Решили вести бюджет по категориям.",
         session_id=session_id,
         user_id=user_id,
     )
+    _log_write("LONG", "profile style + decision saved")
     _print_layers(agent, session_id, user_id)
 
     print("\n[RESTART] Creating a fresh agent instance...")
+    _log_action("restart", "new agent instance, same user_id")
     agent2 = FinancialAgent(model="gpt-5-mini")
     if not real_llm:
         agent2.llm_client = MockLLMClient()
@@ -196,9 +240,12 @@ def run_demo(real_llm: bool = True) -> None:
         session_id=new_session,
         user_id=user_id,
     )
+    _log_read("LONG", "profile + decisions retrieved")
+    _log_result(True, "long-term context applied")
     _print_layers(agent2, new_session, user_id)
     _print_prompt_preview(agent2)
     _print_reply(reply_after_restart)
+    _print_scene(scene_c_label, "END")
     _print_demo_conclusions()
 
     print("\nDemo completed.")
