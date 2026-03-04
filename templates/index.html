@@ -848,6 +848,210 @@ body::before {
   color: var(--gold-dim);
 }
 
+.dd-profile-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 6px;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dd-profile-count-badge {
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--muted2);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dd-profile-field-card {
+  background: var(--s3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.dd-profile-field-card.extra {
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.dd-profile-field-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.dd-profile-field-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dd-profile-field-tech {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--muted);
+}
+
+.dd-profile-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.dd-profile-badge {
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.dd-profile-badge.source-user {
+  color: var(--green);
+  background: rgba(76, 201, 138, 0.1);
+  border-color: rgba(76, 201, 138, 0.35);
+}
+
+.dd-profile-badge.source-agent {
+  color: var(--gold);
+  background: rgba(232, 201, 109, 0.1);
+  border-color: rgba(232, 201, 109, 0.35);
+}
+
+.dd-profile-badge.source-debug,
+.dd-profile-badge.source-unknown {
+  color: var(--muted2);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border2);
+}
+
+.dd-profile-verified {
+  font-size: 0.62rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dd-profile-verified.ok { color: var(--green); }
+.dd-profile-verified.warn { color: var(--gold); }
+
+.dd-profile-hint {
+  margin: 7px 0 6px;
+  font-size: 0.63rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.dd-profile-hint-icon {
+  color: var(--gold-dim);
+  margin-right: 4px;
+}
+
+.dd-profile-examples {
+  margin-bottom: 7px;
+  font-size: 0.61rem;
+  color: var(--muted);
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.dd-profile-input,
+.dd-profile-textarea {
+  width: 100%;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  background: var(--s2);
+  color: var(--muted2);
+  font-size: 0.68rem;
+  padding: 6px 8px;
+}
+
+.dd-profile-input {
+  font-family: var(--sans);
+}
+
+.dd-profile-textarea {
+  min-height: 68px;
+  resize: vertical;
+  line-height: 1.35;
+  font-family: var(--mono);
+}
+
+.dd-profile-subgroup {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.dd-profile-subgroup-title {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--muted2);
+}
+
+.dd-profile-subgroup-hint {
+  margin: 4px 0 6px;
+  font-size: 0.61rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.dd-profile-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.dd-profile-extra-add {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(200px, 2fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.dd-profile-conflict-card {
+  background: rgba(240, 110, 110, 0.06);
+  border: 1px solid rgba(240, 110, 110, 0.24);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.dd-profile-conflict-title {
+  font-size: 0.69rem;
+  font-weight: 600;
+  color: #f7c4c4;
+  margin-bottom: 6px;
+}
+
+.dd-profile-conflict-row {
+  font-size: 0.64rem;
+  color: var(--muted2);
+  margin-bottom: 4px;
+  line-height: 1.35;
+}
+
+.dd-profile-empty {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-style: italic;
+}
+
 /* Уведомление о смене ветки в чате */
 .branch-switch-notice {
   text-align: center; padding: 4px 14px;
@@ -979,6 +1183,185 @@ body::before {
 .ctx-warn-badge.visible { opacity: 1; }
 .ctx-warn-badge.warn { background: rgba(232,201,109,0.12); color: var(--gold); }
 .ctx-warn-badge.danger { background: rgba(240,110,110,0.1); color: var(--red); }
+
+/* ── Task State Panel ── */
+.task-state-panel {
+  margin: 10px 24px 0;
+  padding: 12px 14px;
+  background: var(--s2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  z-index: 2;
+}
+
+.task-state-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-state-badge {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: var(--muted2);
+  background: var(--s3);
+}
+
+.task-state-badge.planning { color: var(--gold-dim); border-color: rgba(232,201,109,0.3); }
+.task-state-badge.execution { color: var(--blue); border-color: rgba(91,156,246,0.35); }
+.task-state-badge.validation { color: var(--gold); border-color: rgba(232,201,109,0.45); }
+.task-state-badge.done { color: var(--green); border-color: rgba(76,201,138,0.45); }
+.task-state-badge.idle { color: var(--muted); border-color: rgba(255,255,255,0.22); }
+
+.task-step-counter {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted2);
+}
+
+.task-current {
+  font-size: 0.78rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.task-state-reason {
+  font-size: 0.67rem;
+  color: var(--muted2);
+}
+
+.task-done-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-done-item {
+  font-size: 0.69rem;
+  color: var(--muted2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.35;
+}
+
+.task-done-item.done {
+  color: var(--green);
+}
+
+.task-done-item.done .task-done-mark {
+  color: var(--green);
+}
+
+.task-done-mark {
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.task-validation {
+  display: none;
+  font-size: 0.68rem;
+  color: var(--gold-dim);
+  background: rgba(232,201,109,0.08);
+  border: 1px solid rgba(232,201,109,0.25);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.task-validation.visible {
+  display: block;
+}
+
+.task-done-badge {
+  display: none;
+  font-size: 0.68rem;
+  color: var(--green);
+  background: rgba(76,201,138,0.08);
+  border: 1px solid rgba(76,201,138,0.25);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.task-done-badge.visible {
+  display: block;
+}
+
+.task-validation-btn {
+  display: none;
+  width: fit-content;
+  font-size: 0.68rem;
+  background: rgba(232,201,109,0.08);
+  border: 1px solid rgba(232,201,109,0.3);
+  color: var(--gold);
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s;
+}
+
+.task-validation-btn:hover {
+  background: rgba(232,201,109,0.14);
+  border-color: rgba(232,201,109,0.5);
+}
+
+.task-validation-btn.visible {
+  display: inline-flex;
+}
+
+.task-actions-wrap {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.task-actions-wrap.visible {
+  display: flex;
+}
+
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-action-btn {
+  background: var(--s3);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.68rem;
+  color: var(--muted2);
+  cursor: pointer;
+  transition: border-color 0.14s, color 0.14s, background 0.14s;
+}
+
+.task-action-btn:hover {
+  border-color: rgba(232,201,109,0.38);
+  color: var(--gold);
+  background: rgba(232,201,109,0.05);
+}
+
+.task-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.task-actions-hint {
+  font-size: 0.64rem;
+  color: var(--muted);
+}
 
 /* Messages */
 .messages {
@@ -1661,6 +2044,25 @@ textarea::placeholder { color: var(--muted); }
       <span class="ctx-warn-badge" id="ctxWarnBadge"></span>
     </div>
 
+    <div class="task-state-panel" id="taskStatePanel">
+      <div class="task-state-head">
+        <span class="task-state-badge idle" id="taskStateBadge">IDLE</span>
+        <span class="task-step-counter" id="taskStepCounter">Шаг 0 из 0</span>
+      </div>
+      <div class="task-current" id="taskCurrentStep">Ожидается план и старт задачи.</div>
+      <div class="task-state-reason" id="taskStateReason"></div>
+      <div class="task-actions-wrap" id="taskActionsWrap">
+        <div class="task-actions" id="taskStateActions"></div>
+        <div class="task-actions-hint">Или введите свой вариант вручную.</div>
+      </div>
+      <ul class="task-done-list" id="taskDoneList"></ul>
+      <div class="task-validation" id="taskValidationBlock">Проверьте итог и подтвердите завершение задачи.</div>
+      <div class="task-done-badge" id="taskDoneBadge">Задача завершена. Рабочая память заморожена.</div>
+      <button type="button" class="task-validation-btn" id="taskValidationBtn" onclick="triggerValidationAction()">
+        Перейти к валидации
+      </button>
+    </div>
+
     <div class="messages" id="messages">
       <div class="welcome" id="welcome">
         <div class="welcome-orb">💰</div>
@@ -1962,6 +2364,16 @@ textarea::placeholder { color: var(--muted); }
   const DEFAULT_MODEL = 'gpt-5-mini';
   let currentSessionId = null;
   let selectedModel = DEFAULT_MODEL;
+  let isBusy = false;
+  let currentWorkingView = {
+    state: null,
+    current_step: null,
+    step_index: null,
+    total_steps: 0,
+    done: [],
+    plan: [],
+  };
+  let currentTaskActions = [];
 
   window.addEventListener('DOMContentLoaded', async () => {
     buildLoaderChart();
@@ -1969,12 +2381,294 @@ textarea::placeholder { color: var(--muted); }
     setTimeout(() => setLoaderStep('connect', 'done'), 160);
     DebugMenu.init();
     TokenTracker.init();
+    updateWorkingView(null);
     await initModelSelector();
     await restoreSession();
   });
 
   function getSelectedModel() {
     return selectedModel || DEFAULT_MODEL;
+  }
+
+  function normalizeWorkingView(view) {
+    const raw = view || {};
+    const rawState = raw.state == null ? '' : String(raw.state).trim();
+    const state = rawState ? rawState.toUpperCase() : null;
+    return {
+      state,
+      current_step: raw.current_step || null,
+      step_index: raw.step_index == null ? null : Number(raw.step_index),
+      total_steps: Number(raw.total_steps || 0),
+      done: Array.isArray(raw.done) ? raw.done.map((x) => String(x || '')).filter(Boolean) : [],
+      plan: Array.isArray(raw.plan) ? raw.plan.map((x) => String(x || '')).filter(Boolean) : [],
+    };
+  }
+
+  function normalizeWorkingActions(actions) {
+    if (!Array.isArray(actions)) return [];
+    return actions
+      .map((action) => {
+        if (!action || typeof action !== 'object') return null;
+        const id = String(action.id || '').trim();
+        const label = String(action.label || '').trim();
+        const kind = String(action.kind || '').trim() || (action.client_action ? 'client_action' : 'message');
+        const message = action.message == null ? '' : String(action.message);
+        const clientAction = action.client_action == null ? '' : String(action.client_action);
+        if (!label) return null;
+        return {
+          id,
+          label,
+          kind,
+          message,
+          client_action: clientAction,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function updateWorkingView(view, actions = null) {
+    currentWorkingView = normalizeWorkingView(view);
+    const normalizedActions = normalizeWorkingActions(actions);
+    const state = currentWorkingView.state;
+    const total = Number(currentWorkingView.total_steps || 0);
+    const done = currentWorkingView.done || [];
+    const plan = currentWorkingView.plan || [];
+    const isAwaitingValidation =
+      state === 'EXECUTION'
+      && !currentWorkingView.current_step
+      && total > 0
+      && done.length === plan.length;
+
+    const badge = document.getElementById('taskStateBadge');
+    if (badge) {
+      badge.textContent = state || 'IDLE';
+      badge.classList.remove('planning', 'execution', 'validation', 'done', 'idle');
+      badge.classList.add(
+        state === 'DONE' ? 'done'
+          : state === 'VALIDATION' ? 'validation'
+            : state === 'EXECUTION' ? 'execution'
+              : state === 'PLANNING' ? 'planning' : 'idle'
+      );
+    }
+
+    const stepCounter = document.getElementById('taskStepCounter');
+    if (stepCounter) {
+      let stepIndex = currentWorkingView.step_index;
+      if (state === 'EXECUTION' && (stepIndex == null || Number.isNaN(stepIndex)) && total > 0) {
+        stepIndex = done.length + 1;
+      }
+      const shownIndex = stepIndex == null ? 0 : Math.min(Math.max(1, Number(stepIndex)), Math.max(total, 1));
+      stepCounter.textContent = `Шаг ${shownIndex} из ${total}`;
+    }
+
+    const currentStepEl = document.getElementById('taskCurrentStep');
+    if (currentStepEl) {
+      if (!state) {
+        currentStepEl.textContent = 'Свободный чат активен.';
+      } else if (state === 'PLANNING') {
+        currentStepEl.textContent = 'Ожидается план и старт задачи.';
+      } else if (state === 'EXECUTION') {
+        currentStepEl.textContent = currentWorkingView.current_step
+          ? String(currentWorkingView.current_step)
+          : 'Все шаги завершены. Ожидается валидация.';
+      } else if (state === 'VALIDATION') {
+        currentStepEl.textContent = 'Проверьте итог выполнения перед подтверждением.';
+      } else if (state === 'DONE') {
+        currentStepEl.textContent = 'Задача завершена.';
+      } else {
+        currentStepEl.textContent = 'Состояние задачи не определено.';
+      }
+    }
+
+    const doneList = document.getElementById('taskDoneList');
+    if (doneList) {
+      const rows = plan.map((step) => {
+        const completed = done.includes(step);
+        return (
+          `<li class="task-done-item ${completed ? 'done' : ''}" ${completed ? 'aria-checked="true"' : ''}>`
+          + `<span class="task-done-mark">${completed ? '✓' : '·'}</span>`
+          + `<span>${esc(step)}</span>`
+          + '</li>'
+        );
+      });
+      doneList.innerHTML = rows.join('');
+    }
+
+    const validationBlock = document.getElementById('taskValidationBlock');
+    if (validationBlock) {
+      validationBlock.classList.toggle('visible', state === 'VALIDATION' || isAwaitingValidation);
+      validationBlock.textContent = isAwaitingValidation
+        ? 'Все шаги завершены. Ожидается валидация.'
+        : 'Проверьте итог и подтвердите завершение задачи.';
+    }
+
+    const doneBadge = document.getElementById('taskDoneBadge');
+    if (doneBadge) {
+      doneBadge.classList.toggle('visible', state === 'DONE');
+    }
+
+    const validationBtn = document.getElementById('taskValidationBtn');
+    if (validationBtn) {
+      const visible = state === 'VALIDATION' || isAwaitingValidation;
+      validationBtn.classList.toggle('visible', visible);
+      validationBtn.textContent = state === 'VALIDATION' ? 'Подтвердить завершение' : 'Перейти к валидации';
+    }
+
+    renderTaskActions(state, isAwaitingValidation, normalizedActions);
+    updateInputState();
+  }
+
+  function buildTaskActions(state, isAwaitingValidation) {
+    if (state === 'PLANNING') {
+      return [
+        {
+          id: 'auto_plan',
+          label: 'Сформировать план автоматически',
+          kind: 'message',
+          message: 'Сформируй план задачи автоматически на основе цели',
+        },
+        {
+          id: 'clarify_goal',
+          label: 'Уточнить цель задачи',
+          kind: 'message',
+          message: 'Давай уточним цель задачи перед планированием',
+        },
+      ];
+    }
+    if (state === 'EXECUTION') {
+      return [
+        {
+          id: 'complete_step',
+          label: 'Шаг выполнен',
+          kind: 'message',
+          message: 'Текущий шаг выполнен, переходим к следующему',
+        },
+        {
+          id: 'show_status',
+          label: 'Статус задачи',
+          kind: 'message',
+          message: 'Покажи текущий статус и прогресс задачи',
+        },
+      ];
+    }
+    if (state === 'VALIDATION') {
+      return [
+        {
+          id: 'confirm_done',
+          label: 'Подтвердить завершение',
+          kind: 'message',
+          message: 'Подтверждаю выполнение задачи, переходим к итогам',
+        },
+        {
+          id: 'back_to_execution',
+          label: 'Вернуться к выполнению',
+          kind: 'message',
+          message: 'Нужно доработать, возвращаемся к выполнению',
+        },
+      ];
+    }
+    if (state === 'DONE') {
+      return [
+        {
+          id: 'new_task',
+          label: 'Начать новую задачу',
+          kind: 'client_action',
+          client_action: 'reset_chat',
+        },
+        {
+          id: 'save_results',
+          label: 'Сохранить итоги в память',
+          kind: 'message',
+          message: 'Сохрани ключевые решения и итоги задачи в долгосрочную память',
+        },
+      ];
+    }
+    return [];
+  }
+
+  function renderTaskActions(state, isAwaitingValidation, preferredActions = []) {
+    const wrap = document.getElementById('taskActionsWrap');
+    const container = document.getElementById('taskStateActions');
+    if (!wrap || !container) return;
+
+    const serverActions = normalizeWorkingActions(preferredActions);
+    currentTaskActions = serverActions.length ? serverActions : buildTaskActions(state, isAwaitingValidation);
+    if (!currentTaskActions.length) {
+      wrap.classList.remove('visible');
+      container.innerHTML = '';
+      return;
+    }
+
+    const items = currentTaskActions.map((item, idx) => (
+      `<button type="button" class="task-action-btn" onclick="handleActionClick(currentTaskActions[${idx}])">${esc(item.label)}</button>`
+    ));
+    container.innerHTML = items.join('');
+    wrap.classList.add('visible');
+  }
+
+  async function handleActionClick(action) {
+    if (isBusy) return;
+    if (!action) return;
+
+    if ((action.kind === 'client_action' && action.client_action === 'reset_chat') || action.action === 'reset_chat') {
+      await resetChat();
+      return;
+    }
+    if ((action.kind === 'message' || action.message) && action.message) {
+      sendMsg(action.message);
+    }
+  }
+
+  function updateInputState() {
+    const input = document.getElementById('userInput');
+    const send = document.getElementById('sendBtn');
+    const reason = document.getElementById('taskStateReason');
+    if (!input || !send || !reason) return;
+
+    const state = currentWorkingView.state;
+    const total = Number(currentWorkingView.total_steps || 0);
+    const done = currentWorkingView.done || [];
+    const isAwaitingValidation =
+      state === 'EXECUTION'
+      && !currentWorkingView.current_step
+      && total > 0
+      && done.length === total;
+
+    let reasonText = '';
+    if (state === 'PLANNING') {
+      reasonText = 'Ожидается план и старт задачи.';
+    } else if (state === 'EXECUTION' && isAwaitingValidation) {
+      reasonText = 'Все шаги завершены. Ожидается валидация.';
+    } else if (state === 'VALIDATION') {
+      reasonText = 'Доступно только подтверждение валидации.';
+    } else if (state === 'DONE') {
+      reasonText = 'Задача завершена. Working memory заморожена.';
+    }
+
+    input.disabled = false;
+    send.disabled = isBusy;
+    document.querySelectorAll('.task-action-btn').forEach((btn) => {
+      btn.disabled = isBusy;
+    });
+    reason.textContent = reasonText;
+  }
+
+  function triggerValidationAction() {
+    const state = currentWorkingView.state;
+    if (state === 'VALIDATION') {
+      sendMsg('подтверждаю завершение');
+      return;
+    }
+    const total = Number(currentWorkingView.total_steps || 0);
+    const done = currentWorkingView.done || [];
+    const isAwaitingValidation =
+      state === 'EXECUTION'
+      && !currentWorkingView.current_step
+      && total > 0
+      && done.length === total;
+    if (isAwaitingValidation) {
+      sendMsg('перейди в validation');
+    }
   }
 
   function populateModelSelect(models) {
@@ -2123,6 +2817,7 @@ textarea::placeholder { color: var(--muted); }
       } else if (data.ctx_state) {
         DebugMenu.updateCtxState(data.ctx_state);
       }
+      updateWorkingView(data.working_view || null, data.working_actions || []);
       setLoaderStep('data', 'done');
       DebugMenu.refreshMemoryLayers();
 
@@ -2429,10 +3124,14 @@ textarea::placeholder { color: var(--muted); }
       let html = '';
       html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">state</span><span class="dd-memory-kv-val">' + esc(t.state || '') + '</span></div>';
       html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">task_id</span><span class="dd-memory-kv-val">' + esc(t.task_id || '') + '</span></div>';
+      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">task</span><span class="dd-memory-kv-val">' + esc(t.task || t.goal || '') + '</span></div>';
       html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">goal</span><span class="dd-memory-kv-val">' + esc(t.goal || '') + '</span></div>';
       html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">current_step</span><span class="dd-memory-kv-val">' + esc(t.current_step || '') + '</span></div>';
       if (Array.isArray(t.plan) && t.plan.length) {
         html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">plan</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.plan)) + '</span></div>';
+      }
+      if (Array.isArray(t.done) && t.done.length) {
+        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">done</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.done)) + '</span></div>';
       }
       if (Array.isArray(t.done_steps) && t.done_steps.length) {
         html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">done_steps</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(t.done_steps)) + '</span></div>';
@@ -2450,6 +3149,184 @@ textarea::placeholder { color: var(--muted); }
       container.innerHTML = html;
     }
 
+    const _profileCanonicalOrder = [
+      'stack_tools',
+      'response_style',
+      'hard_constraints',
+      'user_role_level',
+      'project_context',
+    ];
+
+    const _profileFieldMeta = {
+      stack_tools: {
+        label: 'Стек и инструменты',
+        type: 'list[str]',
+        input: 'multiline',
+        hint: 'Технологии, фреймворки и API проекта. Один элемент на строку.',
+        examples: [
+          'FastAPI, Postgres, ЦБ РФ API, Tinkoff Invest API',
+          'Python, pandas, yfinance, Moex API',
+          'React, Recharts, Plaid API, Stripe',
+        ],
+      },
+      response_style: {
+        label: 'Стиль ответов',
+        type: 'str',
+        input: 'singleline',
+        hint: 'Как агент должен отвечать: тон, длина, валюта, формат чисел.',
+        examples: [
+          'Кратко, в рублях, без англицизмов',
+          'Всегда указывать процент от дохода, не только абсолютную сумму',
+          'Сравнивать расходы с прожиточным минимумом, bullet points',
+        ],
+      },
+      hard_constraints: {
+        label: 'Жёсткие ограничения',
+        type: 'list[str]',
+        input: 'multiline',
+        hint: 'Бюджетные лимиты, запреты на инструменты, регуляторные требования. Одно ограничение на строку.',
+        examples: [
+          'Бюджет на инструменты до 3000₽/мес',
+          'Без зарубежных платёжных систем',
+          'Только рублёвые счета, без валютных операций',
+          'Не предлагать инвестиции с риском выше среднего',
+        ],
+      },
+      user_role_level: {
+        label: 'Роль и уровень',
+        type: 'str',
+        input: 'singleline',
+        hint: 'Должность, специализация и уровень пользователя — влияет на глубину объяснений.',
+        examples: [
+          'Финансовый аналитик, средний уровень, корпоративные финансы',
+          'Частный инвестор, начинающий, фондовый рынок РФ',
+          'Бухгалтер, малый бизнес, УСН',
+          'Продукт-менеджер, финтех-стартап, нужны объяснения без формул',
+        ],
+      },
+      project_context: {
+        label: 'Контекст проекта',
+        type: 'ProjectContext',
+        input: 'project_context',
+        hint: 'Название, цели и ключевые решения — агент использует это как фон для всех ответов.',
+        examples: [],
+      },
+    };
+
+    function _profileGetMeta(field) {
+      return _profileFieldMeta[field] || null;
+    }
+
+    function _profileSplitLines(rawValue) {
+      return String(rawValue == null ? '' : rawValue)
+        .split('\n')
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+
+    function _profileListToText(value) {
+      if (Array.isArray(value)) return value.map((x) => String(x)).join('\n');
+      if (typeof value === 'string') {
+        const raw = value.trim();
+        if (raw.startsWith('[')) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed.map((x) => String(x)).join('\n');
+          } catch (err) {
+            // noop: fallback to raw string
+          }
+        }
+        return value;
+      }
+      return '';
+    }
+
+    function _profileNormalizeProjectContext(value) {
+      let ctx = {};
+      if (value && typeof value === 'object') {
+        ctx = value;
+      } else if (typeof value === 'string' && value.trim()) {
+        const raw = value.trim();
+        if (raw.startsWith('{') || raw.startsWith('[')) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              ctx = { project_name: '', goals: [], key_decisions: parsed };
+            } else if (parsed && typeof parsed === 'object') {
+              ctx = parsed;
+            }
+          } catch (err) {
+            ctx = { project_name: raw, goals: [], key_decisions: [] };
+          }
+        } else {
+          ctx = { project_name: raw, goals: [], key_decisions: [] };
+        }
+      }
+      return {
+        project_name: String(ctx.project_name || '').trim(),
+        goals: Array.isArray(ctx.goals) ? ctx.goals.map((x) => String(x).trim()).filter(Boolean) : [],
+        key_decisions: Array.isArray(ctx.key_decisions) ? ctx.key_decisions.map((x) => String(x).trim()).filter(Boolean) : [],
+      };
+    }
+
+    function _profileCollectProjectContextInput() {
+      const projectName = document.getElementById('profileProjectContextName');
+      const goals = document.getElementById('profileProjectContextGoals');
+      const keyDecisions = document.getElementById('profileProjectContextDecisions');
+      return {
+        project_name: String(projectName?.value || '').trim(),
+        goals: _profileSplitLines(goals?.value || ''),
+        key_decisions: _profileSplitLines(keyDecisions?.value || ''),
+      };
+    }
+
+    function _profileSourceClass(source) {
+      if (source === 'USER_EXPLICIT') return 'source-user';
+      if (source === 'AGENT_INFERRED') return 'source-agent';
+      if (source === 'DEBUG_MENU') return 'source-debug';
+      return 'source-unknown';
+    }
+
+    function _profileToDisplayText(value) {
+      if (value == null) return '—';
+      if (Array.isArray(value)) return value.map((x) => String(x)).join(', ');
+      if (value && typeof value === 'object') {
+        if ('project_name' in value || 'goals' in value || 'key_decisions' in value) {
+          const ctx = _profileNormalizeProjectContext(value);
+          const parts = [];
+          if (ctx.project_name) parts.push(`проект: ${ctx.project_name}`);
+          if (ctx.goals.length) parts.push(`цели: ${ctx.goals.join(', ')}`);
+          if (ctx.key_decisions.length) parts.push(`решения: ${ctx.key_decisions.join(', ')}`);
+          return parts.join(' | ') || '—';
+        }
+        try {
+          return JSON.stringify(value);
+        } catch (err) {
+          return String(value);
+        }
+      }
+      return String(value);
+    }
+
+    function _profileUpdatedText(isoText) {
+      if (!isoText) return '—';
+      const dt = new Date(isoText);
+      if (Number.isNaN(dt.getTime())) return String(isoText);
+      return dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function _profileConflictDate(isoText) {
+      if (!isoText) return '—';
+      const dt = new Date(isoText);
+      if (Number.isNaN(dt.getTime())) return String(isoText);
+      return dt.toLocaleDateString('ru-RU');
+    }
+
+    function _profileExamplesBlock(meta) {
+      if (!meta || !Array.isArray(meta.examples) || meta.examples.length === 0) return '';
+      return '<div class="dd-profile-examples">Примеры:\n• ' + esc(meta.examples.join('\n• ')) + '</div>';
+    }
+
     function _renderLongTerm(data) {
       const container = document.getElementById('memoryLongTermContent');
       if (!container) return;
@@ -2459,18 +3336,148 @@ textarea::placeholder { color: var(--muted); }
       }
       let html = '';
       const profile = data.profile || {};
-      html += '<div class="dd-memory-lt-card"><div class="dd-memory-lt-card-meta"><span class="dd-memory-item-role">Профиль</span></div>';
-      html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">style</span><span class="dd-memory-kv-val">' + esc(profile.style || '') + '</span></div>';
-      if (Array.isArray(profile.constraints) && profile.constraints.length) {
-        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">constraints</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(profile.constraints)) + '</span></div>';
+
+      html += '<div class="dd-profile-section-title">Профиль (canonical)</div>';
+      _profileCanonicalOrder.forEach((fieldKey) => {
+        const meta = _profileGetMeta(fieldKey);
+        const fieldObj = profile[fieldKey] || {};
+        const source = String(fieldObj.source || '').toUpperCase();
+        const verified = Boolean(fieldObj.verified);
+        const confidenceRaw = Number(fieldObj.confidence);
+        const hasConfidence = Number.isFinite(confidenceRaw);
+        const updated = _profileUpdatedText(fieldObj.updated_at || '');
+        const sourceClass = _profileSourceClass(source);
+
+        html += '<div class="dd-profile-field-card">';
+        html += '<div class="dd-profile-field-head">';
+        html += '<div>';
+        html += '<div class="dd-profile-field-title">' + esc(meta.label) + '</div>';
+        html += '<div class="dd-profile-field-tech">' + esc(fieldKey + ' · ' + meta.type + ' · updated ' + updated) + '</div>';
+        html += '</div>';
+        html += '<div class="dd-profile-badges">';
+        html += '<span class="dd-profile-badge ' + esc(sourceClass) + '">' + esc(source || 'N/A') + '</span>';
+        html += '<span class="dd-profile-verified ' + (verified ? 'ok' : 'warn') + '">' + (verified ? '✓ verified' : '⚠ unverified') + '</span>';
+        if (hasConfidence) {
+          html += '<span class="dd-profile-badge source-agent">' + esc('conf ' + Math.round(confidenceRaw * 100) + '%') + '</span>';
+        }
+        if (!verified) {
+          html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.confirmProfileField(\'' + esc(fieldKey) + '\')">Подтвердить</button>';
+        }
+        html += '</div></div>';
+        html += '<div class="dd-profile-hint"><span class="dd-profile-hint-icon">ℹ</span>' + esc(meta.hint) + '</div>';
+        html += _profileExamplesBlock(meta);
+
+        if (fieldKey === 'stack_tools' || fieldKey === 'hard_constraints') {
+          const textValue = _profileListToText(fieldObj.value);
+          html += '<textarea id="profileFieldInput_' + esc(fieldKey) + '" class="dd-profile-textarea" placeholder="Один элемент на строку">' + esc(textValue) + '</textarea>';
+        } else if (fieldKey === 'project_context') {
+          const ctx = _profileNormalizeProjectContext(fieldObj.value);
+          html += '<div class="dd-profile-subgroup">';
+          html += '<div class="dd-profile-subgroup-title">Название проекта</div>';
+          html += '<div class="dd-profile-subgroup-hint"><span class="dd-profile-hint-icon">ℹ</span>Как называется проект или задача\nПримеры: Мой бюджет 2025 / Финансы семьи / Расходы ИП / КорпБюджет Q2</div>';
+          html += '<input id="profileProjectContextName" class="dd-profile-input" value="' + esc(ctx.project_name) + '" placeholder="Название проекта" />';
+          html += '</div>';
+
+          html += '<div class="dd-profile-subgroup">';
+          html += '<div class="dd-profile-subgroup-title">Цели</div>';
+          html += '<div class="dd-profile-subgroup-hint"><span class="dd-profile-hint-icon">ℹ</span>Что нужно достичь. Одна цель на строку.\nПримеры: Сократить расходы на подписки на 30%; Накопить подушку безопасности за 6 месяцев; Закрыть квартальный бюджет с отклонением не более 5%</div>';
+          html += '<textarea id="profileProjectContextGoals" class="dd-profile-textarea" placeholder="Одна цель на строку">' + esc(_profileListToText(ctx.goals)) + '</textarea>';
+          html += '</div>';
+
+          html += '<div class="dd-profile-subgroup">';
+          html += '<div class="dd-profile-subgroup-title">Ключевые решения</div>';
+          html += '<div class="dd-profile-subgroup-hint"><span class="dd-profile-hint-icon">ℹ</span>Что уже решено — методология, инструменты, интеграции. Одно решение на строку.\nПримеры: Метод 50/30/20; Учёт в рублях; Postgres для хранения транзакций; Plaid для импорта выписок</div>';
+          html += '<textarea id="profileProjectContextDecisions" class="dd-profile-textarea" placeholder="Одно решение на строку">' + esc(_profileListToText(ctx.key_decisions)) + '</textarea>';
+          html += '</div>';
+        } else {
+          const textValue = fieldObj.value == null ? '' : String(fieldObj.value);
+          html += '<input id="profileFieldInput_' + esc(fieldKey) + '" class="dd-profile-input" value="' + esc(textValue) + '" />';
+        }
+
+        html += '<div class="dd-profile-actions">';
+        html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.saveProfileField(\'' + esc(fieldKey) + '\')">Save</button>';
+        html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.deleteProfileField(\'' + esc(fieldKey) + '\')">Delete</button>';
+        html += '</div>';
+        html += '</div>';
+      });
+
+      const extraFields = profile.extra_fields || {};
+      const extraKeys = Object.keys(extraFields);
+      html += '<div class="dd-profile-section-title">Дополнительные поля (только DebugMenu)</div>';
+      if (!extraKeys.length) {
+        html += '<div class="dd-profile-empty">Пока нет дополнительных полей</div>';
+      } else {
+        extraKeys.forEach((k) => {
+          const fieldObj = extraFields[k] || {};
+          const source = String(fieldObj.source || '').toUpperCase();
+          const sourceClass = _profileSourceClass(source);
+          const verified = Boolean(fieldObj.verified);
+          const updated = _profileUpdatedText(fieldObj.updated_at || '');
+          const value = fieldObj.value;
+          const valueText = typeof value === 'string' ? value : JSON.stringify(value == null ? '' : value, null, 2);
+          const inputId = `profileExtraInput_${k}`;
+
+          html += '<div class="dd-profile-field-card extra">';
+          html += '<div class="dd-profile-field-head">';
+          html += '<div><div class="dd-profile-field-title">' + esc(k) + '</div>';
+          html += '<div class="dd-profile-field-tech">' + esc('extra_fields.' + k + ' · custom · updated ' + updated) + '</div></div>';
+          html += '<div class="dd-profile-badges">';
+          html += '<span class="dd-profile-badge ' + esc(sourceClass) + '">' + esc(source || 'N/A') + '</span>';
+          html += '<span class="dd-profile-verified ' + (verified ? 'ok' : 'warn') + '">' + (verified ? '✓ verified' : '⚠ unverified') + '</span>';
+          if (!verified) {
+            html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.confirmProfileField(\'' + esc(k) + '\')">Подтвердить</button>';
+          }
+          html += '</div></div>';
+          html += '<div class="dd-profile-hint"><span class="dd-profile-hint-icon">ℹ</span>Пользовательское поле для отладки edge-case сценариев. Не участвует в prompt-инъекции.</div>';
+          html += '<textarea id="' + esc(inputId) + '" class="dd-profile-textarea">' + esc(valueText || '') + '</textarea>';
+          html += '<div class="dd-profile-actions">';
+          html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.saveProfileField(\'' + esc(k) + '\')">Save</button>';
+          html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.deleteProfileField(\'' + esc(k) + '\')">Delete</button>';
+          html += '</div>';
+          html += '</div>';
+        });
       }
-      if (Array.isArray(profile.context) && profile.context.length) {
-        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">context</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(profile.context)) + '</span></div>';
-      }
-      if (Array.isArray(profile.tags) && profile.tags.length) {
-        html += '<div class="dd-memory-kv-row"><span class="dd-memory-kv-label">tags</span><span class="dd-memory-kv-val">' + esc(JSON.stringify(profile.tags)) + '</span></div>';
+
+      html += '<div class="dd-profile-field-card extra">';
+      html += '<div class="dd-profile-field-title">Новое дополнительное поле</div>';
+      html += '<div class="dd-profile-field-tech">extra_fields.&lt;name&gt; · DebugMenu only</div>';
+      html += '<div class="dd-profile-hint"><span class="dd-profile-hint-icon">ℹ</span>Добавляйте только тестовые поля для проверки поведения UI/API.</div>';
+      html += '<div class="dd-profile-extra-add">';
+      html += '<input id="profileExtraFieldName" class="dd-profile-input" placeholder="field" />';
+      html += '<input id="profileExtraFieldValue" class="dd-profile-input" placeholder="value" />';
+      html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.addProfileExtraField()">Add</button>';
+      html += '</div></div>';
+
+      const conflicts = Array.isArray(profile.conflicts) ? profile.conflicts : [];
+      window.__ddProfileConflicts = conflicts;
+      html += '<div class="dd-profile-section-title">Конфликты';
+      if (conflicts.length > 0) {
+        html += '<span class="dd-profile-count-badge">' + esc(String(conflicts.length)) + '</span>';
       }
       html += '</div>';
+      if (!conflicts.length) {
+        html += '<div class="dd-profile-empty">Конфликтов нет ✓</div>';
+      } else {
+        conflicts.forEach((conflict, idx) => {
+          const fieldName = String(conflict.field || '');
+          const meta = _profileGetMeta(fieldName);
+          const label = meta ? `${meta.label} (${fieldName})` : fieldName;
+          const confidence = Number(conflict.confidence);
+          const confidenceText = Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '—';
+          const createdAt = _profileConflictDate(conflict.created_at || '');
+
+          html += '<div class="dd-profile-conflict-card">';
+          html += '<div class="dd-profile-conflict-title">⚠ Конфликт: ' + esc(label) + '</div>';
+          html += '<div class="dd-profile-conflict-row">Текущее (verified): ' + esc(_profileToDisplayText(conflict.existing_value)) + '</div>';
+          html += '<div class="dd-profile-conflict-row">Предложено агентом: ' + esc(_profileToDisplayText(conflict.inferred_value)) + '</div>';
+          html += '<div class="dd-profile-conflict-row">Уверенность: ' + esc(confidenceText) + ' · ' + esc(createdAt) + '</div>';
+          html += '<div class="dd-profile-actions">';
+          html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.resolveProfileConflictByIndex(' + idx + ',\'keep\')">Оставить текущее</button>';
+          html += '<button type="button" class="dd-micro-btn" onclick="DebugMenu.resolveProfileConflictByIndex(' + idx + ',\'use\')">Принять предложение</button>';
+          html += '</div></div>';
+        });
+      }
+
       const decisions = data.decisions_top_k || [];
       decisions.forEach((d) => {
         const id = 'lt-d-' + (d.id != null ? d.id : Math.random().toString(36).slice(2));
@@ -2503,7 +3510,7 @@ textarea::placeholder { color: var(--muted); }
         if (tagsHtml) html += '<div class="dd-memory-lt-card-tags">' + tagsHtml + '</div>';
         html += '<div class="dd-memory-item-preview">' + esc(text) + (n.full_truncated && expanded ? ' …' : '') + '</div></div>';
       });
-      if (!profile.style && !(profile.constraints && profile.constraints.length) && !(profile.context && profile.context.length) && !decisions.length && !notes.length) {
+      if (!Object.keys(profile).length && !decisions.length && !notes.length) {
         container.innerHTML = '<div class="dd-memory-working-empty">Профиль и записи пусты</div>';
       } else {
         container.innerHTML = html;
@@ -2547,6 +3554,124 @@ textarea::placeholder { color: var(--muted); }
         if (data && data.snapshot) updateMemoryLayers(data.snapshot);
       } catch (err) {
         console.warn('[DebugMemory] delete long-term failed:', err);
+      }
+    }
+
+    function _parseProfileInputValue(field, rawValue) {
+      if (field === 'stack_tools' || field === 'hard_constraints') {
+        return _profileSplitLines(rawValue);
+      }
+      if (field === 'project_context') {
+        return _profileCollectProjectContextInput();
+      }
+      if (field === 'response_style' || field === 'user_role_level') {
+        return String(rawValue == null ? '' : rawValue).trim();
+      }
+
+      const raw = String(rawValue == null ? '' : rawValue).trim();
+      if (!raw) return '';
+      try {
+        return JSON.parse(raw);
+      } catch (err) {
+        return raw;
+      }
+    }
+
+    async function saveProfileField(field) {
+      if (!field) return;
+      let value;
+      if (field === 'project_context') {
+        value = _profileCollectProjectContextInput();
+      } else {
+        const input = document.getElementById(`profileFieldInput_${field}`) || document.getElementById(`profileExtraInput_${field}`);
+        if (!input) return;
+        value = _parseProfileInputValue(field, input.value);
+      }
+      try {
+        const res = await fetch('/debug/memory/profile/field', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field, value }),
+        });
+        await parseApiResponse(res);
+        refreshMemoryLayers();
+      } catch (err) {
+        console.warn('[DebugMemory] profile save failed:', err);
+      }
+    }
+
+    async function deleteProfileField(field) {
+      if (!field) return;
+      if (!window.confirm(`Delete field ${field}?`)) return;
+      try {
+        const res = await fetch('/debug/memory/profile/field', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field }),
+        });
+        await parseApiResponse(res);
+        refreshMemoryLayers();
+      } catch (err) {
+        console.warn('[DebugMemory] profile delete failed:', err);
+      }
+    }
+
+    async function addProfileExtraField() {
+      const nameEl = document.getElementById('profileExtraFieldName');
+      const valueEl = document.getElementById('profileExtraFieldValue');
+      const field = String(nameEl?.value || '').trim();
+      if (!field) return;
+      const value = _parseProfileInputValue(field, valueEl?.value || '');
+      try {
+        const res = await fetch('/debug/memory/profile/field', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field, value }),
+        });
+        await parseApiResponse(res);
+        if (nameEl) nameEl.value = '';
+        if (valueEl) valueEl.value = '';
+        refreshMemoryLayers();
+      } catch (err) {
+        console.warn('[DebugMemory] profile extra add failed:', err);
+      }
+    }
+
+    async function confirmProfileField(field) {
+      if (!field) return;
+      try {
+        const res = await fetch('/debug/memory/profile/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field }),
+        });
+        await parseApiResponse(res);
+        refreshMemoryLayers();
+      } catch (err) {
+        console.warn('[DebugMemory] profile confirm failed:', err);
+      }
+    }
+
+    async function resolveProfileConflictByIndex(index, mode) {
+      const conflicts = Array.isArray(window.__ddProfileConflicts) ? window.__ddProfileConflicts : [];
+      const conflict = conflicts[Number(index)];
+      if (!conflict || !conflict.field) return;
+      const payload = { field: String(conflict.field) };
+      if (mode === 'keep') {
+        payload.keep_existing = true;
+      } else {
+        payload.chosen_value = conflict.inferred_value;
+      }
+      try {
+        const res = await fetch('/debug/memory/profile/conflict/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        await parseApiResponse(res);
+        refreshMemoryLayers();
+      } catch (err) {
+        console.warn('[DebugMemory] profile conflict resolve failed:', err);
       }
     }
 
@@ -2866,6 +3991,11 @@ textarea::placeholder { color: var(--muted); }
       updateMemoryLayers,
       clearWorkingMemory,
       deleteLongTermEntry,
+      saveProfileField,
+      deleteProfileField,
+      addProfileExtraField,
+      confirmProfileField,
+      resolveProfileConflictByIndex,
       _toggleExpand,
     };
   })();
@@ -3164,19 +4294,22 @@ textarea::placeholder { color: var(--muted); }
   }
 
   /* ── Chat ── */
-  async function sendMsg() {
+  async function sendMsg(textOverride = null) {
+    if (isBusy) return;
     const inp = document.getElementById('userInput');
-    const text = inp.value.trim();
+    const text = textOverride == null ? inp.value.trim() : String(textOverride || '').trim();
     if (!text) return;
 
-    inp.value = '';
-    autoResize(inp);
-    hideWelcome();
-    addMsg('user', text);
-    setBusy(true);
-
-    showTyping();
     try {
+      setBusy(true);
+      if (inp) {
+        inp.value = '';
+        autoResize(inp);
+      }
+      hideWelcome();
+      addMsg('user', text);
+      showTyping();
+
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3212,21 +4345,21 @@ textarea::placeholder { color: var(--muted); }
       } else if (data && data.ctx_state) {
         DebugMenu.updateCtxState(data.ctx_state);
       }
+      updateWorkingView((data && data.working_view) || null, (data && data.working_actions) || []);
       if (data) DebugMenu.refreshMemoryLayers();
     } catch (err) {
       removeTyping();
-      console.error('[CHAT] request failed', err);
+      console.error('[CHAT_ERROR]', err);
       addMsg('bot', '⚠️ Ошибка соединения с сервером.');
     } finally {
       setBusy(false);
-      inp.focus();
+      if (inp && !inp.disabled) inp.focus();
     }
   }
 
   function q(btn) {
     const text = btn.textContent.replace(/^→\s*/, '').trim();
-    document.getElementById('userInput').value = text;
-    sendMsg();
+    sendMsg(text);
   }
 
   function addMsg(role, text) {
@@ -3256,7 +4389,10 @@ textarea::placeholder { color: var(--muted); }
 
   function removeTyping() { const t = document.getElementById('typing'); if (t) t.remove(); }
   function hideWelcome() { const w = document.getElementById('welcome'); if (w) w.style.display = 'none'; }
-  function setBusy(v) { document.getElementById('sendBtn').disabled = v; }
+  function setBusy(v) {
+    isBusy = Boolean(v);
+    updateInputState();
+  }
   async function resetChat() { await fetch('/reset', { method: 'POST' }); location.reload(); }
   function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
   function autoResize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px'; }

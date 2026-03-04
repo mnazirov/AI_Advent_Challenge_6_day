@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -128,7 +129,11 @@ class FinancialAgent:
             )
         self.conversation_history: list[dict[str, str]] = []
         self.ctx = ContextStrategyManager(client=self.llm_client, model=self.model)
-        self.memory = MemoryManager(short_term_limit=30)
+        self.memory = MemoryManager(
+            short_term_limit=30,
+            llm_client=self.llm_client,
+            step_parser_model="gpt-5-nano",
+        )
         self.csv_summary: str | None = None
         self.summary_sections: dict[str, str] = {}
         self.expense_cache: dict[str, Any] = {}
@@ -137,6 +142,7 @@ class FinancialAgent:
         self.last_schema_token_stats: dict[str, Any] | None = None
         self.last_memory_stats: dict[str, Any] | None = None
         self.last_prompt_preview: dict[str, str] | None = None
+        self.last_chat_response_meta: dict[str, Any] | None = None
         self._last_encoding: str | None = None
         logger.info("[INIT] FinancialAgent инициализирован model=%s", self.model)
 
@@ -298,17 +304,23 @@ class FinancialAgent:
         else:
             enriched_message_for_model = user_message
 
-        self.memory.route_user_message(
-            session_id=current_session_id,
-            user_id=current_user_id,
-            user_message=user_message,
-        )
+        guard_ctx_before = self.memory.working.load(current_session_id)
         gate_message = self.memory.enforce_planning_gate(
             session_id=current_session_id,
             user_message=user_message,
         )
         if gate_message:
-            assistant_message = self._sanitize_reply_text(gate_message)
+            is_planning_block = bool(guard_ctx_before and guard_ctx_before.state.value == "PLANNING")
+            finish_reason = "state_blocked_planning" if is_planning_block else "state_blocked"
+            if is_planning_block:
+                goal = str(guard_ctx_before.task or "Текущая задача").strip() or "Текущая задача"
+                assistant_message = self._sanitize_reply_text(
+                    f"Задача создана: '{goal}'.\n"
+                    "Чтобы начать выполнение — сформируйте план.\n"
+                    "Напишите шаги или нажмите 'Сформировать план автоматически'."
+                )
+            else:
+                assistant_message = self._sanitize_reply_text(gate_message)
             self.memory.append_turn(
                 session_id=current_session_id,
                 user_message=user_message,
@@ -328,9 +340,79 @@ class FinancialAgent:
                 "strategy": "memory_layers",
                 "ctx_stats": self.ctx.stats(self.conversation_history),
                 "memory_stats": self.last_memory_stats,
-                "finish_reason": "state_blocked",
+                "finish_reason": finish_reason,
             }
-            logger.info("[CHAT][STATE_GUARD] blocked_in_planning session=%s", current_session_id)
+            self.last_prompt_preview = {
+                "schema_version": 2,
+                "system": "[REDACTED_SYSTEM_PROMPT]",
+                "system_chars": 0,
+                "system_hash": "",
+                "user_chars": len(user_message or ""),
+                "short_term_count": 0,
+                "working_state": self.memory.get_working_view(session_id=current_session_id).get("state"),
+                "profile_injected": [],
+                "profile_skipped": [],
+                "decisions_count": 0,
+                "notes_count": 0,
+            }
+            self.last_chat_response_meta = {
+                "finish_reason": finish_reason,
+                "working_view": self.memory.get_working_view(session_id=current_session_id),
+                "working_actions": self.memory.get_working_actions(session_id=current_session_id),
+            }
+            if is_planning_block:
+                logger.info("[CHAT][STATE_GUARD] blocked_in_planning session=%s", current_session_id)
+            else:
+                logger.info("[CHAT][STATE_GUARD] blocked session=%s", current_session_id)
+            return assistant_message
+
+        self.memory.route_user_message(
+            session_id=current_session_id,
+            user_id=current_user_id,
+            user_message=user_message,
+        )
+        guard_ctx_after_route = self.memory.working.load(current_session_id)
+        if (
+            guard_ctx_after_route
+            and guard_ctx_after_route.state.value == "PLANNING"
+            and bool((guard_ctx_after_route.vars or {}).get("plan_guidance_required"))
+        ):
+            goal = str(guard_ctx_after_route.task or "Текущая задача").strip() or "Текущая задача"
+            assistant_message = self._sanitize_reply_text(
+                f"Задача создана: '{goal}'.\n"
+                "Чтобы начать выполнение — сформируйте план.\n"
+                "Опишите шаги плана или нажмите 'Сформировать план автоматически'."
+            )
+            vars_patch = dict(guard_ctx_after_route.vars)
+            vars_patch.pop("plan_guidance_required", None)
+            self.memory.working.update(current_session_id, vars=vars_patch)
+            self.memory.append_turn(
+                session_id=current_session_id,
+                user_message=user_message,
+                assistant_message=assistant_message,
+            )
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": assistant_message})
+            latency = round((perf_counter() - t_start) * 1000)
+            self.last_memory_stats = self.memory.stats(session_id=current_session_id, user_id=current_user_id)
+            self.last_token_stats = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+                "latency_ms": int(latency),
+                "scope": "chat",
+                "strategy": "memory_layers",
+                "ctx_stats": self.ctx.stats(self.conversation_history),
+                "memory_stats": self.last_memory_stats,
+                "finish_reason": "state_blocked_planning",
+            }
+            self.last_chat_response_meta = {
+                "finish_reason": "state_blocked_planning",
+                "working_view": self.memory.get_working_view(session_id=current_session_id),
+                "working_actions": self.memory.get_working_actions(session_id=current_session_id),
+            }
+            logger.info("[CHAT][STATE_GUARD] blocked_in_planning session=%s reason=plan_extract_fallback", current_session_id)
             return assistant_message
 
         messages, prompt_preview, read_meta = self.memory.build_messages(
@@ -358,7 +440,7 @@ class FinancialAgent:
             "session_id": current_session_id,
             "memory_stats": current_memory_stats,
             "memory_read": read_meta,
-            "messages": messages,
+            "messages_redacted": self._redact_messages_for_log(messages),
         }
         logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
         logger.info(
@@ -454,6 +536,11 @@ class FinancialAgent:
             "memory_read": read_meta,
             "prompt_preview": self.last_prompt_preview,
             "finish_reason": finish_reason,
+        }
+        self.last_chat_response_meta = {
+            "finish_reason": finish_reason,
+            "working_view": self.memory.get_working_view(session_id=current_session_id),
+            "working_actions": self.memory.get_working_actions(session_id=current_session_id),
         }
 
         logger.info(
@@ -589,7 +676,7 @@ If needs_data=false, queries must be [].
                 "model": self.model,
                 "messages_count": len(route_messages),
                 "temperature": 0,
-                "messages": route_messages,
+                "messages_redacted": self._redact_messages_for_log(route_messages),
             }
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
 
@@ -1043,7 +1130,7 @@ Return ONLY valid JSON, no explanations, no markdown:
                 "model": self.model,
                 "messages_count": 1,
                 "temperature": 0,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages_redacted": self._redact_messages_for_log([{"role": "user", "content": prompt}]),
             }
             logger.info("[API][OpenAI][Запрос]\n%s", self._pretty_json(request_payload))
 
@@ -1961,6 +2048,19 @@ Return ONLY valid JSON, no explanations, no markdown:
             return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
         except Exception:
             return str(payload)
+
+    def _redact_messages_for_log(self, messages: list[dict]) -> list[dict[str, Any]]:
+        redacted: list[dict[str, Any]] = []
+        for msg in messages or []:
+            content = str(msg.get("content") or "")
+            redacted.append(
+                {
+                    "role": str(msg.get("role") or ""),
+                    "chars": len(content),
+                    "hash": hashlib.sha256(content.encode("utf-8")).hexdigest()[:12],
+                }
+            )
+        return redacted
 
     def _create_chat_completion(self, **kwargs):
         """Единый вызов через абстракцию LLMClient."""

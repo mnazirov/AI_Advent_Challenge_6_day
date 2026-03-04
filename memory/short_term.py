@@ -9,6 +9,7 @@ logger = logging.getLogger("memory")
 
 PREVIEW_LENGTH = 120
 MAX_DEBUG_TEXT_CHARS = 4000
+ALLOWED_ROLES = {"user", "assistant"}
 
 
 class ShortTermMemory:
@@ -27,7 +28,11 @@ class ShortTermMemory:
 
     def get_context(self, session_id: str) -> list[dict[str, str]]:
         rows = storage.memory_load_short_term_messages(session_id=session_id)
-        context = [{"role": r["role"], "content": r["content"]} for r in rows[-self.limit_n :]]
+        context = [
+            {"role": r["role"], "content": r["content"]}
+            for r in rows[-self.limit_n :]
+            if str(r.get("role") or "") in ALLOWED_ROLES
+        ]
         logger.info("[MEMORY_READ] layer=short_term turns=%s", len(context))
         return context
 
@@ -39,7 +44,7 @@ class ShortTermMemory:
         for msg in messages[-self.limit_n :]:
             role = str(msg.get("role") or "")
             content = str(msg.get("content") or "")
-            if role in {"user", "assistant", "system"} and content:
+            if role in ALLOWED_ROLES and content:
                 self.append(session_id=session_id, role=role, content=content)
 
     def snapshot(self, session_id: str) -> dict:

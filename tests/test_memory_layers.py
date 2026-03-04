@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+import pytest
 import storage
+from llm.mock_client import MockLLMClient
 from memory.manager import MemoryManager
 from memory.models import TaskState
 from memory.prompt_builder import PromptBuilder
@@ -15,6 +19,35 @@ def _setup_temp_db() -> None:
     storage.DB_PATH = Path(tempfile.mktemp(suffix=".db"))
     storage.UPLOADS_DIR = Path(tempfile.mkdtemp())
     storage.init_db()
+
+
+def _build_agent_with_mock_llm(mock_llm: MockLLMClient) -> Any:
+    try:
+        from agent import FinancialAgent
+    except ModuleNotFoundError as exc:
+        pytest.skip(f"agent dependencies are not installed: {exc}")
+
+    class _CtxStub:
+        def stats(self, history: list[dict]) -> dict:
+            del history
+            return {}
+
+    agent = FinancialAgent.__new__(FinancialAgent)
+    agent.llm_client = mock_llm
+    agent.model = "gpt-5-mini"
+    agent.conversation_history = []
+    agent.ctx = _CtxStub()
+    agent.memory = MemoryManager(short_term_limit=30, llm_client=mock_llm, step_parser_model="gpt-5-nano")
+    agent.csv_summary = None
+    agent.summary_sections = {}
+    agent.expense_cache = {}
+    agent.df = None
+    agent.last_token_stats = None
+    agent.last_schema_token_stats = None
+    agent.last_memory_stats = None
+    agent.last_prompt_preview = None
+    agent._last_encoding = None
+    return agent
 
 
 def test_short_term_limit_n() -> None:
@@ -75,6 +108,19 @@ def test_short_term_read_returns_last_n_in_order() -> None:
     assert [m["content"] for m in context] == ["turn-3", "turn-4", "turn-5", "turn-6"]
 
 
+def test_short_term_filters_system_role_from_context() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    mem.short_term.append(sid, "user", "u1")
+    mem.short_term.append(sid, "system", "internal system text")
+    mem.short_term.append(sid, "assistant", "a1")
+
+    context = mem.short_term.get_context(sid)
+    assert [m["role"] for m in context] == ["user", "assistant"]
+    assert all(m["role"] != "system" for m in context)
+
+
 def test_short_term_is_runtime_scoped() -> None:
     _setup_temp_db()
     sid = storage.create_session()
@@ -127,7 +173,7 @@ def test_router_writes_to_correct_layers() -> None:
         user_id=uid,
         user_message="С этого момента всегда отвечай кратко и не используй англицизмы",
     )
-    assert any(e.layer == "long_term.profile" for e in events_profile)
+    assert not any(e.layer == "long_term.profile" for e in events_profile)
 
     events_decision = mem.route_user_message(
         session_id=sid,
@@ -150,7 +196,45 @@ def test_prompt_builder_sections() -> None:
         system_instructions="SYS",
         data_context="DATA",
         long_term={
-            "profile": {"style": "concise", "constraints": ["ru"], "context": ["ctx"]},
+            "profile": {
+                "stack_tools": {
+                    "value": ["FastAPI", "Postgres"],
+                    "source": "user_explicit",
+                    "verified": True,
+                    "confidence": None,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                "response_style": {
+                    "value": "краткий",
+                    "source": "user_explicit",
+                    "verified": True,
+                    "confidence": None,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                "hard_constraints": {
+                    "value": ["no AWS"],
+                    "source": "user_explicit",
+                    "verified": True,
+                    "confidence": None,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                "user_role_level": {
+                    "value": "senior backend",
+                    "source": "user_explicit",
+                    "verified": True,
+                    "confidence": None,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                "project_context": {
+                    "value": {"project_name": "BudgetBot", "goals": ["Reduce churn"], "key_decisions": ["Use API"]},
+                    "source": "user_explicit",
+                    "verified": True,
+                    "confidence": None,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                "extra_fields": {"x": {"value": "y", "source": "debug_menu", "verified": True, "confidence": None, "updated_at": datetime.utcnow().isoformat()}},
+                "conflicts": [],
+            },
             "decisions": [{"text": "Use Flask"}],
             "notes": [{"text": "Note A"}],
         },
@@ -159,7 +243,11 @@ def test_prompt_builder_sections() -> None:
         user_query="Now Q",
     )
     assert messages[0]["role"] == "system"
-    assert "[LONG_TERM_PROFILE]" in messages[0]["content"]
+    assert "[RESPONSE_STYLE_POLICY]" in messages[0]["content"]
+    assert "[HARD_CONSTRAINTS]" in messages[0]["content"]
+    assert "[STACK_TOOLS_PREFERENCE]" in messages[0]["content"]
+    assert "[USER_ROLE_LEVEL]" in messages[0]["content"]
+    assert "[PROJECT_CONTEXT]" in messages[0]["content"]
     assert "[LONG_TERM_DECISIONS]" in messages[0]["content"]
     assert messages[-1]["content"] == "Now Q"
 
@@ -185,14 +273,23 @@ def test_working_and_longterm_save_load() -> None:
     assert len(lt["decisions"]) >= 1
 
 
-def test_working_clears_on_done_state() -> None:
+def test_working_done_state_is_persisted_and_frozen() -> None:
     _setup_temp_db()
     wm = WorkingMemory()
     sid = storage.create_session()
     ctx = wm.start_task(session_id=sid, goal="Закрыть задачу")
-    ctx.state = TaskState.DONE
+    ctx.plan = ["Шаг 1"]
+    ctx.current_step = "Шаг 1"
+    wm.transition_state(ctx, TaskState.EXECUTION)
+    ctx.done = ["Шаг 1"]
+    wm.transition_state(ctx, TaskState.VALIDATION)
+    wm.transition_state(ctx, TaskState.DONE)
     wm.save(ctx)
-    assert wm.load(sid) is None
+    loaded = wm.load(sid)
+    assert loaded is not None
+    assert loaded.state == TaskState.DONE
+    with pytest.raises(ValueError, match="Working memory is frozen in DONE state"):
+        wm.update(session_id=sid, open_questions=["x"])
 
 
 def test_strict_planning_gate() -> None:
@@ -257,6 +354,349 @@ def test_planning_gate_auto_transitions_when_ready() -> None:
     ctx = mem.working.load(sid)
     assert ctx is not None
     assert ctx.state.value == "EXECUTION"
+
+
+def test_router_autofills_current_step_from_first_added_step() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+
+    mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Требование: добавь шаг реализовать endpoint",
+    )
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    assert ctx.plan == ["реализовать endpoint"]
+    assert ctx.current_step == "реализовать endpoint"
+
+
+def test_router_autofill_current_step_does_not_override_existing() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+
+    mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Требование: добавь шаг шаг 1",
+    )
+    mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Текущий шаг: ручной текущий шаг",
+    )
+    mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Требование: добавь шаг шаг 2",
+    )
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    assert ctx.plan == ["шаг 1", "ручной текущий шаг", "шаг 2"]
+    assert ctx.current_step == "ручной текущий шаг"
+
+
+def test_router_llm_patch_updates_working_without_regex_markers() -> None:
+    _setup_temp_db()
+
+    def responder(messages, kwargs):
+        del messages
+        if kwargs.get("model") == "gpt-5-nano":
+            return (
+                '{"is_working_update": true, "plan_steps_to_add": ["Собрать метрики подписок"], '
+                '"current_step": "Собрать метрики подписок", "done_steps_to_add": [], '
+                '"requirements_to_add": [], "artifacts_to_add": [], "confidence": 0.92}'
+            )
+        return "ok"
+
+    mem = MemoryManager(short_term_limit=5, llm_client=MockLLMClient(responder=responder))
+    sid = storage.create_session()
+
+    events = mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Начнем с анализа подписок за месяц",
+    )
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    assert "Собрать метрики подписок" in ctx.plan
+    assert ctx.current_step == "Собрать метрики подписок"
+    assert any(e.layer == "working" for e in events)
+
+
+def test_router_plan_formation_llm_transitions_to_execution() -> None:
+    _setup_temp_db()
+
+    def responder(messages, kwargs):
+        del messages
+        if kwargs.get("model") == "gpt-5-nano":
+            return (
+                '{"is_working_update": true, "task": "План оптимизации бюджета", '
+                '"plan": ["Собрать метрики расходов", "Определить лимиты по категориям"], '
+                '"plan_steps_to_add": [], "current_step": "Собрать метрики расходов", '
+                '"done_steps_to_add": [], "requirements_to_add": [], "artifacts_to_add": [], "confidence": 0.9}'
+            )
+        return "ok"
+
+    mem = MemoryManager(short_term_limit=5, llm_client=MockLLMClient(responder=responder))
+    sid = storage.create_session()
+
+    events = mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Сформируй план задачи",
+    )
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    assert ctx.plan == ["Собрать метрики расходов", "Определить лимиты по категориям"]
+    assert ctx.current_step == "Собрать метрики расходов"
+    assert ctx.state == TaskState.EXECUTION
+    assert any(e.layer == "working" and "plan" in e.keys for e in events)
+    assert any(e.layer == "working" and "state" in e.keys for e in events)
+
+
+def test_router_llm_invalid_json_falls_back_to_regex() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5, llm_client=MockLLMClient(responder=lambda m, k: "not-json"))
+    sid = storage.create_session()
+
+    mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Требование: добавь шаг подготовить отчет",
+    )
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    assert ctx.plan == ["подготовить отчет"]
+    assert ctx.current_step == "подготовить отчет"
+
+
+def test_router_llm_low_confidence_patch_is_ignored() -> None:
+    _setup_temp_db()
+
+    def responder(messages, kwargs):
+        del messages
+        if kwargs.get("model") == "gpt-5-nano":
+            return (
+                '{"is_working_update": true, "plan_steps_to_add": ["Шаг из low confidence"], '
+                '"current_step": "Шаг из low confidence", "done_steps_to_add": [], '
+                '"requirements_to_add": [], "artifacts_to_add": [], "confidence": 0.21}'
+            )
+        return "ok"
+
+    mem = MemoryManager(short_term_limit=5, llm_client=MockLLMClient(responder=responder))
+    sid = storage.create_session()
+
+    events = mem.route_user_message(
+        session_id=sid,
+        user_id="u",
+        user_message="Просто болтаем без постановки задачи",
+    )
+    assert not events
+    assert mem.working.load(sid) is None
+
+
+def test_router_task_intent_autostarts_when_llm_confidence_zero(caplog: pytest.LogCaptureFixture) -> None:
+    _setup_temp_db()
+
+    def responder(messages, kwargs):
+        del messages
+        if kwargs.get("model") == "gpt-5-nano":
+            return (
+                '{"is_working_update": true, "task": "Составить детальный план на месяц", '
+                '"plan_steps_to_add": [], "current_step": "", "done_steps_to_add": [], '
+                '"requirements_to_add": [], "artifacts_to_add": [], "confidence": 0.0}'
+            )
+        return "ok"
+
+    mem = MemoryManager(short_term_limit=5, llm_client=MockLLMClient(responder=responder))
+    sid = storage.create_session()
+    msg = "Составь мне детальный план на месяц"
+
+    with caplog.at_level("INFO", logger="memory"):
+        events = mem.route_user_message(
+            session_id=sid,
+            user_id="u",
+            user_message=msg,
+        )
+
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    assert ctx.task == msg[:100]
+    assert ctx.state == TaskState.PLANNING
+    assert any(e.layer == "working" for e in events)
+    assert "[TASK_AUTO_START]" in caplog.text
+    assert "[WORKING_EXTRACT_FALLBACK]" in caplog.text
+    assert "applied=True confidence=0.85" in caplog.text
+
+
+def test_router_zero_confidence_plan_formation_sets_guidance_flag() -> None:
+    _setup_temp_db()
+
+    def responder(messages, kwargs):
+        del messages
+        if kwargs.get("model") == "gpt-5-nano":
+            return (
+                '{"is_working_update": true, "task": "Сформировать план", '
+                '"plan": [], "plan_steps_to_add": [], "current_step": "", '
+                '"done_steps_to_add": [], "requirements_to_add": [], "artifacts_to_add": [], "confidence": 0.0}'
+            )
+        return "ok"
+
+    mem = MemoryManager(short_term_limit=5, llm_client=MockLLMClient(responder=responder))
+    sid = storage.create_session()
+    mem.route_user_message(session_id=sid, user_id="u", user_message="Сформируй план задачи")
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    assert ctx.state == TaskState.PLANNING
+    assert bool((ctx.vars or {}).get("plan_guidance_required")) is True
+
+
+def test_planning_gate_allows_plan_formation_when_plan_empty() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    mem.working.start_task(session_id=sid, goal="Оптимизация бюджета")
+
+    blocked = mem.enforce_planning_gate(session_id=sid, user_message="Сформируй план задачи")
+    assert blocked is None
+
+
+def test_working_actions_financial_only_no_code_shortcuts() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    mem.working.start_task(session_id=sid, goal="Оптимизация бюджета")
+
+    planning_actions = mem.get_working_actions(session_id=sid)
+    planning_labels = {a.get("label") for a in planning_actions}
+    planning_messages = " ".join(str(a.get("message") or "") for a in planning_actions).lower()
+    assert planning_labels == {"Сформировать план автоматически", "Уточнить цель задачи"}
+    assert "код" not in planning_messages
+    assert "deploy" not in planning_messages
+
+    mem.working.update(sid, plan=["A", "B"], current_step="A")
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    mem.working.transition_state(ctx, TaskState.EXECUTION)
+    mem.working.save(ctx)
+    exec_actions = mem.get_working_actions(session_id=sid)
+    exec_labels = {a.get("label") for a in exec_actions}
+    assert exec_labels == {"Шаг выполнен", "Статус задачи"}
+
+
+def test_working_load_repairs_legacy_current_step_and_persists() -> None:
+    _setup_temp_db()
+    sid = storage.create_session()
+    storage.memory_save_working_task(
+        session_id=sid,
+        task_id="task-legacy",
+        goal="Legacy task",
+        state="PLANNING",
+        plan=["A", "B"],
+        current_step="",
+        done_steps=["A"],
+        open_questions=[],
+        artifacts=[],
+        vars_data={},
+        updated_at=datetime.utcnow().isoformat(),
+    )
+
+    wm = WorkingMemory()
+    ctx = wm.load(sid)
+    assert ctx is not None
+    assert ctx.current_step == "B"
+    persisted = storage.memory_load_working_task(sid)
+    assert persisted is not None
+    assert persisted["current_step"] == "B"
+
+
+def test_working_load_repairs_legacy_current_step_when_all_done() -> None:
+    _setup_temp_db()
+    sid = storage.create_session()
+    storage.memory_save_working_task(
+        session_id=sid,
+        task_id="task-legacy-all-done",
+        goal="Legacy task",
+        state="PLANNING",
+        plan=["A"],
+        current_step="",
+        done_steps=["A"],
+        open_questions=[],
+        artifacts=[],
+        vars_data={},
+        updated_at=datetime.utcnow().isoformat(),
+    )
+
+    wm = WorkingMemory()
+    ctx = wm.load(sid)
+    assert ctx is not None
+    assert ctx.current_step == "A"
+    persisted = storage.memory_load_working_task(sid)
+    assert persisted is not None
+    assert persisted["current_step"] == "A"
+
+
+def test_agent_chat_populates_working_current_step_via_mock_llm() -> None:
+    _setup_temp_db()
+
+    def responder(messages, kwargs):
+        del messages
+        if kwargs.get("model") == "gpt-5-nano":
+            return (
+                '{"is_working_update": true, "plan_steps_to_add": ["Анализ подписок"], '
+                '"current_step": "Анализ подписок", "done_steps_to_add": [], '
+                '"requirements_to_add": [], "artifacts_to_add": [], "confidence": 0.9}'
+            )
+        return "Принято. Двигаемся по шагам."
+
+    mock = MockLLMClient(responder=responder)
+    agent = _build_agent_with_mock_llm(mock)
+    sid = storage.create_session()
+    uid = "integration_user"
+
+    reply = agent.chat("Начнем с анализа подписок и зафиксируем стартовый шаг", session_id=sid, user_id=uid)
+    assert reply
+
+    snapshot = agent.memory.debug_snapshot(session_id=sid, user_id=uid, query="", top_k=3)
+    assert snapshot["working"]["present"] is True
+    task = snapshot["working"]["task"] or {}
+    assert task.get("current_step") == "Анализ подписок"
+
+
+def test_agent_chat_plan_formation_in_planning_calls_llm_and_transitions() -> None:
+    _setup_temp_db()
+
+    def responder(messages, kwargs):
+        del messages
+        if kwargs.get("model") == "gpt-5-nano":
+            return (
+                '{"is_working_update": true, "task": "Оптимизировать бюджет", '
+                '"plan": ["Собрать метрики расходов", "Поставить лимиты по категориям"], '
+                '"plan_steps_to_add": [], "current_step": "Собрать метрики расходов", '
+                '"done_steps_to_add": [], "requirements_to_add": [], "artifacts_to_add": [], "confidence": 0.9}'
+            )
+        return "План сформирован. Начинаем выполнение."
+
+    mock = MockLLMClient(responder=responder)
+    agent = _build_agent_with_mock_llm(mock)
+    sid = storage.create_session()
+    uid = "planning_flow_user"
+    agent.memory.working.start_task(session_id=sid, goal="Оптимизация бюджета")
+
+    reply = agent.chat("сформируй план задачи", session_id=sid, user_id=uid)
+    assert "План" in reply or "план" in reply
+    stats = agent.last_token_stats or {}
+    assert int(stats.get("prompt_tokens", 0) or 0) > 0
+    assert str(stats.get("finish_reason") or "") != "state_blocked_planning"
+
+    working_view = agent.memory.get_working_view(session_id=sid)
+    assert working_view.get("state") == "EXECUTION"
+    assert working_view.get("step_index") == 1
+    labels = {a.get("label") for a in (agent.memory.get_working_actions(session_id=sid) or [])}
+    assert "Сразу код" not in labels
 
 
 def test_memory_debug_snapshot_short_term_shape() -> None:
@@ -358,10 +798,49 @@ def test_memory_write_feed_records_router_layers() -> None:
     )
     writes = mem.get_recent_write_events(session_id=sid, limit=10)
     layers = {w.get("layer") for w in writes}
-    assert "long_term.profile" in layers
+    assert "long_term.profile" not in layers
     assert "long_term.decision" in layers
     # Пассивное сохранение short-term turn не должно попадать в индикатор save policy.
     assert "short_term" not in layers
+
+
+def test_passive_chat_does_not_update_profile_after_20_messages() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    uid = "no_profile_passive"
+    before = mem.long_term.get_profile(user_id=uid)
+    for i in range(20):
+        mem.route_user_message(
+            session_id=sid,
+            user_id=uid,
+            user_message=f"С этого момента всегда правило #{i}",
+        )
+    after = mem.long_term.get_profile(user_id=uid)
+    assert before == after
+
+
+def test_task_artifacts_do_not_leak_into_profile_fields() -> None:
+    _setup_temp_db()
+    mem = MemoryManager(short_term_limit=5)
+    sid = storage.create_session()
+    uid = "artifact_profile_guard"
+
+    mem.working.start_task(session_id=sid, goal="Task")
+    mem.working.update(session_id=sid, plan=["A"], current_step="A")
+    ctx = mem.working.load(sid)
+    assert ctx is not None
+    mem.working.transition_state(ctx, TaskState.EXECUTION)
+    mem.working.save(ctx)
+    mem.working.complete_current_step(
+        sid,
+        artifact={"step": "A", "type": "response", "ref": "artifact://result"},
+    )
+
+    profile = mem.long_term.get_profile(user_id=uid)
+    assert profile["stack_tools"]["value"] == []
+    assert profile["hard_constraints"]["value"] == []
+    assert profile["project_context"]["value"]["key_decisions"] == []
 
 
 def test_clear_working_layer_does_not_touch_other_layers() -> None:
@@ -417,16 +896,26 @@ if __name__ == "__main__":
     test_router_writes_to_correct_layers()
     test_prompt_builder_sections()
     test_working_and_longterm_save_load()
-    test_working_clears_on_done_state()
+    test_working_done_state_is_persisted_and_frozen()
     test_strict_planning_gate()
     test_strict_planning_gate_financial_trigger()
     test_planning_gate_financial_trigger_allows_after_plan()
     test_planning_gate_auto_transitions_when_ready()
+    test_router_autofills_current_step_from_first_added_step()
+    test_router_autofill_current_step_does_not_override_existing()
+    test_router_llm_patch_updates_working_without_regex_markers()
+    test_router_llm_invalid_json_falls_back_to_regex()
+    test_router_llm_low_confidence_patch_is_ignored()
+    test_working_load_repairs_legacy_current_step_and_persists()
+    test_working_load_repairs_legacy_current_step_when_all_done()
+    test_agent_chat_populates_working_current_step_via_mock_llm()
     test_memory_debug_snapshot_short_term_shape()
     test_memory_debug_snapshot_working_present_and_empty()
     test_memory_debug_snapshot_long_term_top_k()
     test_memory_debug_snapshot_full_truncation_flag()
     test_memory_write_feed_records_router_layers()
+    test_passive_chat_does_not_update_profile_after_20_messages()
+    test_task_artifacts_do_not_leak_into_profile_fields()
     test_clear_working_layer_does_not_touch_other_layers()
     test_delete_long_term_entry_does_not_touch_short_or_working()
     print("\n🎉 Memory layers tests passed")

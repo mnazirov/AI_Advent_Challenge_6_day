@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 import storage
+from memory.models import LongTermProfile, ProfileField, ProfileSource, ProjectContext
 
 # Используем временную БД для теста
 storage.DB_PATH = Path(tempfile.mktemp(suffix=".db"))
@@ -93,15 +94,115 @@ assert wk is not None and wk["task_id"] == "task-1"
 
 memory_upsert_longterm_profile(
     user_id="default_local_user",
-    style="concise",
-    constraints=["ru"],
-    context=["ctx"],
-    tags=["profile"],
+    profile=LongTermProfile.default(),
 )
 memory_add_longterm_decision(user_id="default_local_user", text="Используем Flask", tags=["decision"])
 profile = memory_load_longterm_profile("default_local_user")
-assert profile is not None and profile["style"] == "concise"
+assert profile is not None
+assert "response_style" in profile
 print("✅ Тест 3.2: memory layers storage")
+
+# Тест 3.3: canonical profile_json roundtrip preserves source/verified/confidence/order
+canonical = LongTermProfile.default()
+canonical.stack_tools = ProfileField(
+    value=["FastAPI", "Postgres"],
+    source=ProfileSource.DEBUG_MENU,
+    verified=True,
+    confidence=0.95,
+    updated_at="2026-03-04T00:00:00",
+)
+canonical.hard_constraints = ProfileField(
+    value=["no AWS", "MIT only"],
+    source=ProfileSource.USER_EXPLICIT,
+    verified=True,
+    confidence=None,
+    updated_at="2026-03-04T00:00:01",
+)
+canonical.project_context = ProfileField(
+    value=ProjectContext(project_name="BudgetBot", goals=["A"], key_decisions=["B"]),
+    source=ProfileSource.USER_EXPLICIT,
+    verified=True,
+    confidence=None,
+    updated_at="2026-03-04T00:00:02",
+)
+memory_upsert_longterm_profile(user_id="default_local_user", profile=canonical)
+loaded_canonical = memory_load_longterm_profile("default_local_user")
+assert loaded_canonical is not None
+assert loaded_canonical["stack_tools"]["value"] == ["FastAPI", "Postgres"]
+assert loaded_canonical["stack_tools"]["source"] == "debug_menu"
+assert loaded_canonical["stack_tools"]["verified"] is True
+assert loaded_canonical["stack_tools"]["confidence"] == 0.95
+assert loaded_canonical["hard_constraints"]["value"] == ["no AWS", "MIT only"]
+assert loaded_canonical["project_context"]["value"]["project_name"] == "BudgetBot"
+print("✅ Тест 3.3: canonical profile roundtrip")
+
+# Тест 3.4: legacy context list -> ProjectContext.key_decisions
+with storage._get_conn() as conn:  # noqa: SLF001 (test only)
+    conn.execute(
+        """
+        INSERT INTO memory_longterm_profile (user_id, style, constraints_json, context_json, tags_json, source, profile_json, profile_conflicts_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            style=excluded.style,
+            constraints_json=excluded.constraints_json,
+            context_json=excluded.context_json,
+            tags_json=excluded.tags_json,
+            source=excluded.source,
+            profile_json=excluded.profile_json,
+            profile_conflicts_json=excluded.profile_conflicts_json,
+            updated_at=excluded.updated_at
+        """,
+        (
+            "legacy_list_user",
+            "concise",
+            '["ru"]',
+            '["d1","d2"]',
+            '["legacy"]',
+            "user_explicit",
+            "{}",
+            "[]",
+            "2026-03-04T00:00:00",
+        ),
+    )
+legacy_list_profile = memory_load_longterm_profile("legacy_list_user")
+assert legacy_list_profile is not None
+assert legacy_list_profile["project_context"]["value"]["key_decisions"] == ["d1", "d2"]
+print("✅ Тест 3.4: legacy list context migration")
+
+# Тест 3.5: legacy context dict -> ProjectContext
+with storage._get_conn() as conn:  # noqa: SLF001 (test only)
+    conn.execute(
+        """
+        INSERT INTO memory_longterm_profile (user_id, style, constraints_json, context_json, tags_json, source, profile_json, profile_conflicts_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            style=excluded.style,
+            constraints_json=excluded.constraints_json,
+            context_json=excluded.context_json,
+            tags_json=excluded.tags_json,
+            source=excluded.source,
+            profile_json=excluded.profile_json,
+            profile_conflicts_json=excluded.profile_conflicts_json,
+            updated_at=excluded.updated_at
+        """,
+        (
+            "legacy_dict_user",
+            "detailed",
+            '["constraint"]',
+            '{"project_name":"X","goals":["g"],"key_decisions":["k"]}',
+            "[]",
+            "user_explicit",
+            "{}",
+            "[]",
+            "2026-03-04T00:00:00",
+        ),
+    )
+legacy_dict_profile = memory_load_longterm_profile("legacy_dict_user")
+assert legacy_dict_profile is not None
+assert legacy_dict_profile["project_context"]["value"]["project_name"] == "X"
+assert legacy_dict_profile["project_context"]["value"]["goals"] == ["g"]
+assert legacy_dict_profile["project_context"]["value"]["key_decisions"] == ["k"]
+print("✅ Тест 3.5: legacy dict context migration")
 
 # Тест 4: очистка истории
 clear_session_messages(sid)

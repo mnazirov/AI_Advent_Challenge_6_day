@@ -302,6 +302,12 @@ def chat():
         save_ctx_state(session_id, agent.ctx.dump())
 
         ctx_state = _build_ctx_state()
+        working_view = agent.memory.get_working_view(session_id=session_id)
+        working_actions = agent.memory.get_working_actions(session_id=session_id)
+        response_meta = agent.last_chat_response_meta or {}
+        finish_reason = response_meta.get("finish_reason")
+        if finish_reason is None and isinstance(token_stats, dict):
+            finish_reason = token_stats.get("finish_reason")
         response_payload = {
             "reply": reply,
             "model": agent.model,
@@ -311,6 +317,9 @@ def chat():
             "ctx_state": ctx_state,
             "ctx_stats": ctx_state["stats"],
             "ctx_strategy": ctx_state["strategy"],
+            "working_view": working_view,
+            "working_actions": response_meta.get("working_actions") or working_actions,
+            "finish_reason": finish_reason,
         }
         response = jsonify(response_payload)
         _log_http_response(
@@ -381,6 +390,213 @@ def debug_memory_layers():
         logger.exception("[DEBUG] memory-layers failed: %s", exc)
         _log_http_response("/debug/memory-layers", 500, {"error": str(exc)})
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/debug/memory/profile", methods=["GET"])
+def debug_get_memory_profile():
+    """Возвращает полный профиль long-term памяти с метаданными полей и конфликтами."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    _log_http_request(
+        "/debug/memory/profile",
+        {"session_id": session_id[:8] + "…", "user_id": user_id[:12] + "…"},
+    )
+    try:
+        profile = agent.memory.get_profile_snapshot(user_id=user_id)
+        payload = {
+            "success": True,
+            "profile": profile,
+            "memory_writes": agent.memory.get_recent_write_events(session_id=session_id, limit=10),
+        }
+        _log_http_response(
+            "/debug/memory/profile",
+            200,
+            {"success": True, "fields": list((profile or {}).keys())},
+        )
+        return jsonify(payload)
+    except Exception as exc:
+        logger.exception("[DEBUG] memory profile get failed: %s", exc)
+        _log_http_response("/debug/memory/profile", 500, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/debug/memory/profile/field", methods=["PATCH"])
+def debug_patch_memory_profile_field():
+    """Обновляет поле профиля long-term памяти через DebugMenu."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    data = request.get_json(silent=True) or {}
+    field = str(data.get("field") or "").strip()
+    value = data.get("value")
+    _log_http_request(
+        "/debug/memory/profile/field",
+        {"session_id": session_id[:8] + "…", "user_id": user_id[:12] + "…", "field": field},
+    )
+    if not field:
+        payload = {"success": False, "error": "field is required"}
+        _log_http_response("/debug/memory/profile/field", 400, payload)
+        return jsonify(payload), 400
+    try:
+        profile = agent.memory.debug_update_profile_field(
+            session_id=session_id,
+            user_id=user_id,
+            field=field,
+            value=value,
+        )
+        payload = {
+            "success": True,
+            "profile": profile,
+            "memory_writes": agent.memory.get_recent_write_events(session_id=session_id, limit=10),
+        }
+        _log_http_response("/debug/memory/profile/field", 200, {"success": True, "field": field, "operation": "patch"})
+        return jsonify(payload)
+    except Exception as exc:
+        _log_http_response("/debug/memory/profile/field", 400, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/debug/memory/profile/field", methods=["DELETE"])
+def debug_delete_memory_profile_field():
+    """Удаляет поле профиля long-term памяти (каноническое или extra)."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    data = request.get_json(silent=True) or {}
+    field = str(data.get("field") or "").strip()
+    _log_http_request(
+        "/debug/memory/profile/field",
+        {"session_id": session_id[:8] + "…", "user_id": user_id[:12] + "…", "field": field, "method": "DELETE"},
+    )
+    if not field:
+        payload = {"success": False, "error": "field is required"}
+        _log_http_response("/debug/memory/profile/field", 400, payload)
+        return jsonify(payload), 400
+    try:
+        profile = agent.memory.debug_delete_profile_field(
+            session_id=session_id,
+            user_id=user_id,
+            field=field,
+        )
+        payload = {
+            "success": True,
+            "profile": profile,
+            "memory_writes": agent.memory.get_recent_write_events(session_id=session_id, limit=10),
+        }
+        _log_http_response("/debug/memory/profile/field", 200, {"success": True, "field": field, "operation": "delete"})
+        return jsonify(payload)
+    except Exception as exc:
+        _log_http_response("/debug/memory/profile/field", 400, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/debug/memory/profile/field", methods=["POST"])
+def debug_add_memory_profile_field():
+    """Добавляет новое поле в extra_fields профиля long-term памяти."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    data = request.get_json(silent=True) or {}
+    field = str(data.get("field") or "").strip()
+    value = data.get("value")
+    _log_http_request(
+        "/debug/memory/profile/field",
+        {"session_id": session_id[:8] + "…", "user_id": user_id[:12] + "…", "field": field, "method": "POST"},
+    )
+    if not field:
+        payload = {"success": False, "error": "field is required"}
+        _log_http_response("/debug/memory/profile/field", 400, payload)
+        return jsonify(payload), 400
+    try:
+        profile = agent.memory.debug_add_profile_extra_field(
+            session_id=session_id,
+            user_id=user_id,
+            field=field,
+            value=value,
+        )
+        payload = {
+            "success": True,
+            "profile": profile,
+            "memory_writes": agent.memory.get_recent_write_events(session_id=session_id, limit=10),
+        }
+        _log_http_response("/debug/memory/profile/field", 200, {"success": True, "field": field, "operation": "add_extra"})
+        return jsonify(payload)
+    except Exception as exc:
+        _log_http_response("/debug/memory/profile/field", 400, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/debug/memory/profile/confirm", methods=["POST"])
+def debug_confirm_memory_profile_field():
+    """Подтверждает поле профиля (verified=true)."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    data = request.get_json(silent=True) or {}
+    field = str(data.get("field") or "").strip()
+    _log_http_request(
+        "/debug/memory/profile/confirm",
+        {"session_id": session_id[:8] + "…", "user_id": user_id[:12] + "…", "field": field},
+    )
+    if not field:
+        payload = {"success": False, "error": "field is required"}
+        _log_http_response("/debug/memory/profile/confirm", 400, payload)
+        return jsonify(payload), 400
+    try:
+        profile = agent.memory.debug_confirm_profile_field(
+            session_id=session_id,
+            user_id=user_id,
+            field=field,
+        )
+        payload = {
+            "success": True,
+            "profile": profile,
+            "memory_writes": agent.memory.get_recent_write_events(session_id=session_id, limit=10),
+        }
+        _log_http_response("/debug/memory/profile/confirm", 200, {"success": True, "field": field})
+        return jsonify(payload)
+    except Exception as exc:
+        _log_http_response("/debug/memory/profile/confirm", 400, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+
+@app.route("/debug/memory/profile/conflict/resolve", methods=["POST"])
+def debug_resolve_memory_profile_conflict():
+    """Разрешает конфликт inferred-значения профиля."""
+    session_id = _get_or_create_session()
+    user_id = _get_or_create_user_id()
+    data = request.get_json(silent=True) or {}
+    field = str(data.get("field") or "").strip()
+    chosen_value = data.get("chosen_value")
+    keep_existing = bool(data.get("keep_existing", False))
+    _log_http_request(
+        "/debug/memory/profile/conflict/resolve",
+        {
+            "session_id": session_id[:8] + "…",
+            "user_id": user_id[:12] + "…",
+            "field": field,
+            "keep_existing": keep_existing,
+            "has_chosen_value": chosen_value is not None,
+        },
+    )
+    if not field:
+        payload = {"success": False, "error": "field is required"}
+        _log_http_response("/debug/memory/profile/conflict/resolve", 400, payload)
+        return jsonify(payload), 400
+    try:
+        profile = agent.memory.debug_resolve_profile_conflict(
+            session_id=session_id,
+            user_id=user_id,
+            field=field,
+            chosen_value=chosen_value,
+            keep_existing=keep_existing,
+        )
+        payload = {
+            "success": True,
+            "profile": profile,
+            "memory_writes": agent.memory.get_recent_write_events(session_id=session_id, limit=10),
+        }
+        _log_http_response("/debug/memory/profile/conflict/resolve", 200, {"success": True, "field": field})
+        return jsonify(payload)
+    except Exception as exc:
+        _log_http_response("/debug/memory/profile/conflict/resolve", 400, {"error": str(exc)})
+        return jsonify({"success": False, "error": str(exc)}), 400
 
 
 @app.route("/debug/memory/working/clear", methods=["POST"])
@@ -627,6 +843,8 @@ def restore_session():
     ui_messages = full_messages
 
     ctx_state = _build_ctx_state()
+    working_view = agent.memory.get_working_view(session_id=session_id)
+    working_actions = agent.memory.get_working_actions(session_id=session_id)
     payload = {
         "found": True,
         "session_id": session_id,
@@ -645,6 +863,8 @@ def restore_session():
         "ctx_state": ctx_state,
         "ctx_stats": ctx_state["stats"],
         "ctx_strategy": ctx_state["strategy"],
+        "working_view": working_view,
+        "working_actions": working_actions,
     }
     _log_http_response(
         "/session/restore",

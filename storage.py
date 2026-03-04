@@ -12,6 +12,9 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+from memory.models import LongTermProfile, ProfileConflict, ProfileField, ProfileSource, ProjectContext
 
 logger = logging.getLogger("storage")
 
@@ -94,6 +97,8 @@ def init_db() -> None:
                 context_json     TEXT NOT NULL DEFAULT '[]',
                 tags_json        TEXT NOT NULL DEFAULT '[]',
                 source           TEXT NOT NULL DEFAULT 'user',
+                profile_json     TEXT NOT NULL DEFAULT '{}',
+                profile_conflicts_json TEXT NOT NULL DEFAULT '[]',
                 updated_at       TEXT NOT NULL
             );
 
@@ -473,6 +478,44 @@ def memory_clear_short_term_messages(session_id: str) -> None:
         conn.execute("DELETE FROM memory_short_term_messages WHERE session_id=?", (session_id,))
 
 
+def _safe_json_loads(raw: str | None, default: object) -> object:
+    try:
+        return json.loads(raw or "")
+    except Exception:
+        return default
+
+
+def _normalize_working_artifacts_for_storage(raw_items: list[dict] | list[str] | object) -> list[dict[str, str]]:
+    items = raw_items if isinstance(raw_items, list) else []
+    out: list[dict[str, str]] = []
+    for item in items:
+        if isinstance(item, dict):
+            step = str(item.get("step") or "")
+            ref = str(item.get("ref") or "")
+            kind = str(item.get("type") or "legacy").strip().lower() or "legacy"
+            if ref:
+                out.append({"step": step, "type": kind, "ref": ref})
+            continue
+
+        if hasattr(item, "to_dict"):
+            try:
+                payload = item.to_dict()
+            except Exception:
+                payload = {}
+            if isinstance(payload, dict):
+                step = str(payload.get("step") or "")
+                ref = str(payload.get("ref") or "")
+                kind = str(payload.get("type") or "legacy").strip().lower() or "legacy"
+                if ref:
+                    out.append({"step": step, "type": kind, "ref": ref})
+                continue
+
+        ref = str(item or "").strip()
+        if ref:
+            out.append({"step": "", "type": "legacy", "ref": ref})
+    return out
+
+
 def memory_save_working_task(
     *,
     session_id: str,
@@ -480,15 +523,20 @@ def memory_save_working_task(
     goal: str,
     state: str,
     plan: list[str],
-    current_step: str,
-    done_steps: list[str],
+    current_step: str | None,
     open_questions: list[str],
-    artifacts: list[str],
+    artifacts: list[dict] | list[str],
     vars_data: dict,
+    done_steps: list[str] | None = None,
+    done: list[str] | None = None,
     updated_at: str | None = None,
+    task: str | None = None,
 ) -> None:
     """Сохраняет рабочий контекст задачи для сессии."""
     ts = updated_at or datetime.utcnow().isoformat()
+    effective_goal = str(task or goal or "").strip()
+    done_payload = list(done if done is not None else (done_steps or []))
+    artifacts_payload = _normalize_working_artifacts_for_storage(artifacts)
     with _get_conn() as conn:
         conn.execute(
             """
@@ -513,13 +561,13 @@ def memory_save_working_task(
             (
                 session_id,
                 task_id,
-                goal,
+                effective_goal,
                 state,
                 json.dumps(plan, ensure_ascii=False),
-                current_step,
-                json.dumps(done_steps, ensure_ascii=False),
+                str(current_step or ""),
+                json.dumps(done_payload, ensure_ascii=False),
                 json.dumps(open_questions, ensure_ascii=False),
-                json.dumps(artifacts, ensure_ascii=False),
+                json.dumps(artifacts_payload, ensure_ascii=False),
                 json.dumps(vars_data, ensure_ascii=False),
                 ts,
             ),
@@ -539,17 +587,30 @@ def memory_load_working_task(session_id: str) -> dict | None:
         ).fetchone()
     if not row:
         return None
+    raw_plan = _safe_json_loads(row["plan_json"], [])
+    raw_done = _safe_json_loads(row["done_steps_json"], [])
+    raw_open_questions = _safe_json_loads(row["open_questions_json"], [])
+    raw_artifacts = _safe_json_loads(row["artifacts_json"], [])
+    raw_vars = _safe_json_loads(row["vars_json"], {})
+
+    plan = raw_plan if isinstance(raw_plan, list) else []
+    done = raw_done if isinstance(raw_done, list) else []
+    open_questions = raw_open_questions if isinstance(raw_open_questions, list) else []
+    vars_data = raw_vars if isinstance(raw_vars, dict) else {}
+    normalized_artifacts = _normalize_working_artifacts_for_storage(raw_artifacts)
     return {
         "session_id": row["session_id"],
         "task_id": row["task_id"],
+        "task": row["goal"],
         "goal": row["goal"],
         "state": row["state"],
-        "plan": json.loads(row["plan_json"] or "[]"),
-        "current_step": row["current_step"] or "",
-        "done_steps": json.loads(row["done_steps_json"] or "[]"),
-        "open_questions": json.loads(row["open_questions_json"] or "[]"),
-        "artifacts": json.loads(row["artifacts_json"] or "[]"),
-        "vars": json.loads(row["vars_json"] or "{}"),
+        "plan": plan,
+        "current_step": row["current_step"] or None,
+        "done": done,
+        "done_steps": done,
+        "open_questions": open_questions,
+        "artifacts": normalized_artifacts,
+        "vars": vars_data,
         "updated_at": row["updated_at"] or "",
     }
 
@@ -570,36 +631,94 @@ def clear_session_memory_layers(session_id: str) -> None:
 def memory_upsert_longterm_profile(
     *,
     user_id: str,
-    style: str,
-    constraints: list[str],
-    context: list[str],
-    tags: list[str],
-    source: str = "user",
+    profile: dict[str, Any] | LongTermProfile | None = None,
+    conflicts: list[dict[str, Any]] | list[ProfileConflict] | None = None,
+    style: str = "",
+    constraints: list[str] | None = None,
+    context: list[str] | dict[str, Any] | None = None,
+    tags: list[str] | None = None,
+    source: str = "user_explicit",
 ) -> None:
     """Создаёт или обновляет long-term профиль пользователя."""
+    del tags
+    profile_obj: LongTermProfile
+    if profile is None:
+        context_value = ProjectContext.from_any(context).to_dict()
+        try:
+            source_enum = ProfileSource(str(source or ProfileSource.USER_EXPLICIT.value))
+        except ValueError:
+            source_enum = ProfileSource.USER_EXPLICIT
+        now_iso = datetime.utcnow().isoformat()
+        profile_obj = LongTermProfile.default()
+        profile_obj.response_style = ProfileField(
+            value=str(style or ""),
+            source=source_enum,
+            verified=True,
+            confidence=None,
+            updated_at=now_iso,
+        )
+        profile_obj.hard_constraints = ProfileField(
+            value=[str(x) for x in (constraints or [])],
+            source=source_enum,
+            verified=True,
+            confidence=None,
+            updated_at=now_iso,
+        )
+        profile_obj.project_context = ProfileField(
+            value=context_value,
+            source=source_enum,
+            verified=True,
+            confidence=None,
+            updated_at=now_iso,
+        )
+        profile_obj.conflicts = []
+    elif isinstance(profile, LongTermProfile):
+        profile_obj = profile
+    else:
+        profile_obj = LongTermProfile.from_dict(profile)
+
+    if conflicts is not None:
+        normalized_conflicts: list[ProfileConflict] = []
+        for item in conflicts:
+            if isinstance(item, ProfileConflict):
+                normalized_conflicts.append(item)
+            elif isinstance(item, dict):
+                normalized_conflicts.append(ProfileConflict.from_dict(item))
+        profile_obj.conflicts = normalized_conflicts
+
+    profile_payload = profile_obj.to_dict()
+    profile_conflicts_payload = [c.to_dict() for c in profile_obj.conflicts]
+    pc_value = ProjectContext.from_any(profile_obj.project_context.value).to_dict()
+    legacy_style = str(profile_obj.response_style.value or "")
+    legacy_constraints = [str(x) for x in (profile_obj.hard_constraints.value or [])]
+    legacy_source = str(profile_obj.response_style.source.value or ProfileSource.USER_EXPLICIT.value)
+    now_iso = datetime.utcnow().isoformat()
+
     with _get_conn() as conn:
         conn.execute(
             """
             INSERT INTO memory_longterm_profile (
-                user_id, style, constraints_json, context_json, tags_json, source, updated_at
+                user_id, style, constraints_json, context_json, source, profile_json, profile_conflicts_json, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 style=excluded.style,
                 constraints_json=excluded.constraints_json,
                 context_json=excluded.context_json,
-                tags_json=excluded.tags_json,
                 source=excluded.source,
+                profile_json=excluded.profile_json,
+                profile_conflicts_json=excluded.profile_conflicts_json,
                 updated_at=excluded.updated_at
             """,
             (
                 user_id,
-                style,
-                json.dumps(constraints, ensure_ascii=False),
-                json.dumps(context, ensure_ascii=False),
-                json.dumps(tags, ensure_ascii=False),
-                source,
-                datetime.utcnow().isoformat(),
+                legacy_style,
+                json.dumps(legacy_constraints, ensure_ascii=False),
+                json.dumps(pc_value, ensure_ascii=False),
+                legacy_source,
+                json.dumps(profile_payload, ensure_ascii=False),
+                json.dumps(profile_conflicts_payload, ensure_ascii=False),
+                now_iso,
             ),
         )
 
@@ -609,7 +728,16 @@ def memory_load_longterm_profile(user_id: str) -> dict | None:
     with _get_conn() as conn:
         row = conn.execute(
             """
-            SELECT user_id, style, constraints_json, context_json, tags_json, source, updated_at
+            SELECT
+                user_id,
+                style,
+                constraints_json,
+                context_json,
+                tags_json,
+                source,
+                profile_json,
+                profile_conflicts_json,
+                updated_at
             FROM memory_longterm_profile
             WHERE user_id=?
             """,
@@ -617,15 +745,57 @@ def memory_load_longterm_profile(user_id: str) -> dict | None:
         ).fetchone()
     if not row:
         return None
-    return {
-        "user_id": row["user_id"],
-        "style": row["style"] or "",
-        "constraints": json.loads(row["constraints_json"] or "[]"),
-        "context": json.loads(row["context_json"] or "[]"),
-        "tags": json.loads(row["tags_json"] or "[]"),
-        "source": row["source"] or "user",
-        "updated_at": row["updated_at"] or "",
-    }
+
+    raw_profile = row["profile_json"] or "{}"
+    parsed_profile = _safe_json_loads(raw_profile, {})
+    profile_obj: LongTermProfile
+    if isinstance(parsed_profile, dict) and parsed_profile:
+        profile_obj = LongTermProfile.from_dict(parsed_profile)
+        raw_conflicts = _safe_json_loads(row["profile_conflicts_json"] or "[]", [])
+        if isinstance(raw_conflicts, list) and raw_conflicts:
+            profile_obj.conflicts = [ProfileConflict.from_dict(x) for x in raw_conflicts if isinstance(x, dict)]
+    else:
+        legacy_constraints = _safe_json_loads(row["constraints_json"], [])
+        if not isinstance(legacy_constraints, list):
+            legacy_constraints = []
+        # TODO(migration): remove tags after DB migration confirmed in staging.
+        legacy_context_raw = _safe_json_loads(row["context_json"], [])
+        project_context = ProjectContext.from_any(legacy_context_raw).to_dict()
+        now_iso = str(row["updated_at"] or datetime.utcnow().isoformat())
+        source_raw = str(row["source"] or ProfileSource.USER_EXPLICIT.value)
+        try:
+            source_enum = ProfileSource(source_raw)
+        except ValueError:
+            source_enum = ProfileSource.USER_EXPLICIT
+        profile_obj = LongTermProfile.default()
+        profile_obj.response_style = ProfileField(
+            value=str(row["style"] or ""),
+            source=source_enum,
+            verified=True,
+            confidence=None,
+            updated_at=now_iso,
+        )
+        profile_obj.hard_constraints = ProfileField(
+            value=[str(x) for x in legacy_constraints],
+            source=source_enum,
+            verified=True,
+            confidence=None,
+            updated_at=now_iso,
+        )
+        profile_obj.project_context = ProfileField(
+            value=project_context,
+            source=source_enum,
+            verified=True,
+            confidence=None,
+            updated_at=now_iso,
+        )
+        profile_obj.conflicts = []
+
+    payload = profile_obj.to_dict()
+    payload["user_id"] = row["user_id"]
+    payload["updated_at"] = row["updated_at"] or ""
+    payload["legacy_tags"] = _safe_json_loads(row["tags_json"], [])
+    return payload
 
 
 def memory_add_longterm_decision(
@@ -1013,6 +1183,8 @@ def _ensure_memory_columns(conn: sqlite3.Connection) -> None:
         ],
         "memory_longterm_profile": [
             ("source", "TEXT NOT NULL DEFAULT 'user'"),
+            ("profile_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("profile_conflicts_json", "TEXT NOT NULL DEFAULT '[]'"),
         ],
         "memory_longterm_decisions": [
             ("type", "TEXT NOT NULL DEFAULT 'decision'"),
